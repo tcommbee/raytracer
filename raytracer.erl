@@ -13,7 +13,7 @@ cast([], _, _) -> 0;
 cast(World, StartPos, Target) ->
 	{Obstacle, Impact, _, ShortestPoint} = chooseClosest(
 			lists:sort(
-				fun({_,_,A},{_,_,B}) -> A =< B end,
+				fun({_,_,A,_},{_,_,B,_}) -> A =< B end,
 				lists:filter(
 					fun({_, Intersection, Y, _})->(Y > 0) and is_record(Intersection,coords) end,
 					intersections(World, StartPos, Target)
