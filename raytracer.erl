@@ -6,6 +6,8 @@
 -record(sphere, {radius = 1, coords = #coords{}, light = false, color = #color{}}).
 
 -define(GLOBAL_ILLUMINATION, true).
+-define(PIXELS_AT_ONCE, 16384).
+-define(THREAD_COUNT, 8).
 
 %cast a ray
 %  World: a list of geometry and lightsources the ray is cast into
@@ -50,7 +52,7 @@ emitRay(World, Target, StartPos, Depth, Trace) ->
 chooseClosest([]) -> {undefined, undefined, undefined, undefined};
 chooseClosest([H|_]) -> H.
 
-%assumes that vector intersect LightSource!
+%assumes that vector intersects LightSource!
 lightness(LightSource, StartPos, Impact, ShortestPoint) ->
 	A = vectorAdd(ShortestPoint, StartPos),
 	MinDistanceToCenter = vectorAbs(vectorSub(LightSource#sphere.coords, A)),
@@ -130,14 +132,11 @@ collect(Index, CanvasSize, List) ->
 %  Passes: the number of rays cast per px
 %  returns: list of px values
 trace(Scene, {Width, Height}, 1) ->
-	PIXELS_AT_ONCE = 16384,
-	THREAD_COUNT = 8,
-	
 	Main = self(),
-	ThreadServer = spawn(fun() -> threadServer(0, PIXELS_AT_ONCE, Scene, Width*Height, Width, Height) end),
+	ThreadServer = spawn(fun() -> threadServer(0, ?PIXELS_AT_ONCE, Scene, Width*Height, Width, Height) end),
 	Threads = lists:map(
 		fun(_) -> spawn(fun() -> traceWorker(Main, ThreadServer) end) end,
-		lists:seq(0, THREAD_COUNT-1)
+		lists:seq(0, ?THREAD_COUNT-1)
 	),
 	Result = collect(0, Width*Height, []),
 	lists:map(
