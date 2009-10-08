@@ -42,7 +42,8 @@ lightness(LightSource, StartPos, Impact, ShortestPoint) ->
 reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
 	A = vectorSub(Impact, StartPos),
 	D = vectorSub(Impact, C),
-	B = scalarMul(D, vectorMul(A, D) * (-2) / R),
+	Distance = abs(vectorMul(A, D)),
+	B = scalarMul(D, (Distance * 2) / (R*R)),
 	vectorAdd(vectorAdd(Impact, B), A).
 
 intersections([], _, _)->[];
