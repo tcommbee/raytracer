@@ -11,17 +11,16 @@
 %  returns: lightness as number
 cast(World, StartPos, Target) ->
 	{Obstacle, Impact, Length} = lists:last(
-		dropwhile(
-			fun({_, Intersection})->(vectorSqr(vectorSub(StartPos, Target, Intersection)) > 0) or (Intersection == undefined) end,
-			sort(
+		lists:dropwhile(
+			fun({_, Intersection, Y})->(Y > 0) or (Intersection == undefined) end,
+			lists:sort(
 				fun({_,_,A},{_,_,B}) -> A =< B end,
 				intersections(World, StartPos, Target)
-				)
 			)
 		)
 	),
 	if
-		length =< 0 -> 0;
+		Length =< 0 -> 0;
 		Obstacle#sphere.light == false -> 0.6 * cast(World, Impact, reflect(Obstacle, StartPos, Impact));
 		Obstacle#sphere.light == true  -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact);
 		true -> 0
@@ -34,6 +33,12 @@ lightness(LightSource, StartPos, Impact) ->
 	LightIntensity = 1000,
 	LightIntensity * math:sqrt(math:sqr(LightSource#sphere.radius) - math:sqr(MinDistanceToCenter)).
 
+reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
+	A = Impact - StartPos,
+	D = Impact - C,
+	B = scalarMul(vectorMul(A, D), -2 / R),
+	Impact + B + A.
+
 intersections([], _, _)->[];
 intersections([First|RestOfWorld],StartPos,Target	)->[intersect(First, StartPos, Target)|intersections(RestOfWorld, StartPos, Target)].
 	
@@ -42,7 +47,16 @@ intersections([First|RestOfWorld],StartPos,Target	)->[intersect(First, StartPos,
 %  Dimensions: of the output image in px
 %  Passes: the number of rays cast per px
 %  returns: list of px values
-trace(Scene, {width, height}, Passes) -> null.
+trace(Scene, {Width, Height}, Passes) ->
+	lists:map(
+		fun(A)->
+			cast(Scene, #coords{x=0, y=0, z=0}, A) end,
+			lists:map(
+				fun(X) -> {-Width/2+X rem Width, -Height/2+X div Height} end,
+				lists:seq(0, Width*Height)
+			)
+	)
+.
 
 vectorSqr(#coords{x=X, y=Y, z=Z}) -> X*X + Y*Y + Z*Z .
 vectorMul(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> A*X + B*Y + C*Z .
@@ -54,13 +68,24 @@ vectorSub(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> #coords{x=A-X, y=B-
 intersect(Object, StartPos, Target) ->
 	CS = vectorSub(StartPos, Object#sphere.coords),
 	ST = vectorSub(StartPos, Target),
-	STsq = vectorSqr(ST),
-	Left = vectorMul(CS, ST) / STsq,
-	Right = (Left*Left) + (Object#sphere.radius-vectorsqr(CS))/STsq,
-
-	SmT = vectorSub(StartPos, Target),
-	SmC = vectorSub(StartPos, Object#sphere.coords),
-	Square = vectorSqr(SmT),
-	Left = vectorMul(SmT, SmC) / Square,
-	Right =  (Object#squere.radius * Object#squere.radius) / Suare,
-	if 
+	R2 = Object#sphere.radius * Object#sphere.radius,
+	
+	ST2 = vectorSqr(ST),
+	CS2 = vectorSqr(CS),
+	CStST = vectorMul(CS, ST),
+	
+	Left = - CStST / ST2,
+	Right = (Left*Left) - (CS2/ST2) + R2,
+	
+	L = if
+		Right  < 0        -> undefined;
+		Right == 0        -> Left;
+		Left - Right =< 0 -> Left + Right;
+		true              -> Right - Left
+	end,
+	
+	if
+		(L == undefined) or (L =< 0)  -> undefined;
+		true -> vectorAdd(scalarMul(-L, ST), StartPos)
+	end
+.
