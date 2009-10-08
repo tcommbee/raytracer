@@ -9,6 +9,7 @@
 %  World: a list of geometry and lightsources the ray is cast into
 %  StartPos: current "position" of ray
 %  Target: point the ray is directed at
+%  Depth: shall be 1 in first step
 %  returns: lightness as number
 cast([], _, _, _) -> 0;
 cast(World, StartPos, Target, Depth) ->
@@ -48,23 +49,87 @@ reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
 	B = scalarMul(D, (Distance * 2) / (R*R)),
 	vectorAdd(vectorAdd(Impact, B), A).
 
-intersections([], _, _)->[];
-intersections([First|RestOfWorld],StartPos,Target	)->[intersect(First, StartPos, Target)|intersections(RestOfWorld, StartPos, Target)].
-	
+intersections([], _, _) -> [];
+intersections([First|RestOfWorld], StartPos, Target) -> [intersect(First, StartPos, Target) | intersections(RestOfWorld, StartPos, Target)].
+
+%traceWorker rendered a range of pixels ("worker thread")
+%  Main: PID of process to receive the rendered pixels
+%  ThreadServer: PID of process to ask for pixels to render
+traceWorker(Main, ThreadServer) ->
+	receive
+		{done } -> ok
+	after 0 ->
+		ThreadServer ! { getJob, self() },
+		receive
+			{ done } -> ok;
+			{ job, Index, Amount, Scene, CanvasSize, Width, Height } ->
+				io:format("traceWorker() PID ~w, Index ~w~n", [self(), Index]),
+				Upper = if
+					Index+Amount >= CanvasSize -> CanvasSize-1;
+					true -> Index+Amount-1
+				end,
+				Values = lists:map(
+					fun(At) ->
+						Pixel = #coords{x=-Width/2+At rem Width, y=-Height/2+At div Height, z=-300},
+						cast(Scene, #coords{x=0, y=0, z=0}, Pixel, 0)
+					end,
+					lists:seq(Index, Upper)
+				),
+				Main ! { pixels, Index, Amount, Values },
+				traceWorker(Main, ThreadServer)
+		end
+	end
+.
+
+%threadServer anwers @traceWorker/2's request for pixels to process
+%  Index: current index (begin with 0)
+%  PixelsAtOnce: pixels to serve at once ...
+%  Scene: scene to render
+%  CanvasSize: height * width
+threadServer(Index, _, _, CanvasSize, _, _) when Index >= CanvasSize ->
+	receive {done} -> ok end;
+threadServer(Index, PixelsAtOnce, Scene, CanvasSize, Width, Height) ->
+	receive
+		{getJob, Caller} ->
+			Caller ! { job, Index, PixelsAtOnce, Scene, CanvasSize, Width, Height },
+			threadServer(Index+PixelsAtOnce, PixelsAtOnce, Scene, CanvasSize, Width, Height)
+	end
+.
+
+%collect collects @traceWorker/2's results
+%  Index: current index (begin with 0)
+%  CanvasSize: height * width
+%  List: already collected pixels
+collect(Index, CanvasSize, List) when Index >= CanvasSize -> List;
+collect(Index, CanvasSize, List) ->
+	receive
+		{ pixels, Index, Amount, Values } ->
+			collect(Index + Amount, CanvasSize, List ++ Values)
+	end
+.
+
 %produce a raytraced image
 %  Scene: a list of geometry and lightsources to be rendered
 %  Dimensions: of the output image in px
 %  Passes: the number of rays cast per px
 %  returns: list of px values
 trace(Scene, {Width, Height}, 1) ->
+	PIXELS_AT_ONCE = 65536,
+	THREAD_COUNT = 8,
+	
+	Main = self(),
+	ThreadServer = spawn(fun() -> threadServer(0, PIXELS_AT_ONCE, Scene, Width*Height, Width, Height) end),
+	Threads = lists:map(
+		fun(_) -> spawn(fun() -> traceWorker(Main, ThreadServer) end) end,
+		lists:seq(0, THREAD_COUNT-1)
+	),
+	Result = collect(0, Width*Height, []),
 	lists:map(
-		fun(A)->
-			cast(Scene, #coords{x=0, y=0, z=0}, A, 0) end,
-			lists:map(
-				fun(X) -> #coords{x=-250 + ((X rem Width) * 500)/Width, y=-250 + ((X div Height) * 500)/Height, z=-300} end,
-				lists:seq(0, Width*Height)
-			)
-	)
+		fun(Thread) -> Thread ! {done} end,
+		Threads
+	),
+	ThreadServer ! {done},
+	Result
 .
 
 
