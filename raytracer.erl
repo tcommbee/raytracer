@@ -33,11 +33,12 @@ chooseClosest([H|_]) -> H.
 
 %assumes that vector intersect LightSource!
 lightness(LightSource, StartPos, Impact, ShortestPoint) ->
-	MinDistanceToCenter = vectorAbs(vectorSub(LightSource#sphere.coords, ShortestPoint)),
+	A = vectorAdd(ShortestPoint, StartPos),
+	MinDistanceToCenter = vectorAbs(vectorSub(LightSource#sphere.coords, A)),
 	LightIntensity = 255,
 	R = LightSource#sphere.radius,
 	LightIntensity * math:sqrt(R*R - MinDistanceToCenter*MinDistanceToCenter)/R.
-	%1000.
+	% 1000.
 
 reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
 	A = vectorSub(Impact, StartPos),
@@ -59,7 +60,7 @@ trace(Scene, {Width, Height}, 1) ->
 		fun(A)->
 			cast(Scene, #coords{x=0, y=0, z=0}, A) end,
 			lists:map(
-				fun(X) -> #coords{x=-Width/2+X rem Width, y=-Height/2+X div Height, z=-300} end,
+				fun(X) -> #coords{x=-250 + ((X rem Width) * 500)/Width, y=-250 + ((X div Height) * 500)/Height, z=-300} end,
 				lists:seq(0, Width*Height)
 			)
 	)
@@ -68,7 +69,7 @@ trace(Scene, {Width, Height}, 1) ->
 
 traceToFile(File, Scene, {Width, Height}, Passes) ->
         Picture = trace(Scene, {Width, Height}, Passes),
-        Out = prep([Width, Height, 1000] ++ Picture),
+        Out = prep([Width, Height, 255] ++ Picture),
         case file:open(File, [write]) of
                 {ok, Fd} ->
                         file:write(Fd, ["P2\n", "# Erlang Raytracer Output\n"] ++ Out),
@@ -115,12 +116,14 @@ intersect(Object, StartPos, Target) ->
 test(X) ->
 	traceToFile("X.pnm",
 		[
-			#sphere{radius=2000, coords = #coords{x=0,y=0,z=-120000}, light = true},
-			#sphere{radius=2000, coords = #coords{x=0,y=2000,z=-120000}, light = true},
-			#sphere{radius=99999, coords = #coords{x=0,y=-120000,z=0}, light = true},
-			#sphere{radius=99999, coords = #coords{x=0,y=120000,z=0}, light = true},
-			#sphere{radius=99999, coords = #coords{x=-120000,y=0,z=0}, light = true},
-			#sphere{radius=99999, coords = #coords{x=120000,y=0,z=0}, light = true}
+			#sphere{radius=2000, coords = #coords{x=0,y=0,z=-12000}, light = true},
+			#sphere{radius=2000, coords = #coords{x=0,y=4000,z=-12000}, light = false},
+			#sphere{radius=2000, coords = #coords{x=4000,y=0,z=-12000}, light = false},
+			#sphere{radius=2000, coords = #coords{x=4000,y=4000,z=-12000}, light = false},
+			#sphere{radius=3000, coords = #coords{x=2000,y=2000,z=-20000}, light = false}
+			%#sphere{radius=99999, coords = #coords{x=0,y=120000,z=0}, light = true},
+			%#sphere{radius=99999, coords = #coords{x=-120000,y=0,z=0}, light = true},
+			%#sphere{radius=99999, coords = #coords{x=120000,y=0,z=0}, light = true}
 		],
 		{X,X},
 		1
