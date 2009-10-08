@@ -5,39 +5,47 @@
 -record(coords, {x = 0, y = 0, z = 0}).
 -record(sphere, {radius = 1, coords = #coords{}, light = false, color = #color{}}).
 
+-define(GLOBAL_ILLUMINATION, true).
+
 %cast a ray
 %  World: a list of geometry and lightsources the ray is cast into
-%  StartPos: current "position" of ray
 %  Target: point the ray is directed at
-%  Depth: shall be 1 in first step
+%  StartPos: current "position" of ray
 %  returns: lightness as number
-cast(World, Target, StartPos, Depth, Color) ->
+cast(World, Target, StartPos) ->
+	Ray = emitRay(World, Target, StartPos, 0, []),
+	case Ray of
+		[false] ->
+			#color{};
+		[true|[Color|Colors]] ->
+			lists:foldl(fun colorMul/2, Color, Colors);
+		[_|Colors] when ?GLOBAL_ILLUMINATION ->
+			lists:foldl(fun colorMul/2, #color{r=128, g=128, b=128}, Colors);
+		_ ->
+			#color{}
+	end
+.
+
+emitRay(World, Target, StartPos, Depth, Trace) ->
 	{Obstacle, Impact, _, ShortestPoint} = chooseClosest(
 		lists:sort(
 			fun({_,_,A,_},{_,_,B,_}) -> A =< B end,
 			lists:filter(
-				fun({_, Intersection, Y, _})->(Y > 0) and is_record(Intersection,coords) end,
+				fun({_, Intersection, Y, _}) -> (Y > 0) and is_record(Intersection,coords) end,
 				intersections(World, StartPos, Target)
 			)
 		)
 	),
 	if
 		not is_record(Impact, coords) ->
-			if
-				Depth == 0 -> #color{r = 0, g = 0, b = 0};
-				true -> Color
-			end;
+			[false|Trace];
 		Obstacle#sphere.light == false ->
 			Reflection = reflect(Obstacle, StartPos, Impact),
-			NewColor = colorMul(Obstacle#sphere.color, Color),
-			cast(World, Reflection, Impact, Depth + 1, NewColor);
-		true ->  % i.e. Obstacle#sphere.light == true
-			lightness(Obstacle, StartPos, Impact, ShortestPoint)
+			emitRay(World, Reflection, Impact, Depth+1, [Obstacle#sphere.color|Trace]);
+		true ->
+			[ true| [lightness(Obstacle, StartPos, Impact, ShortestPoint)|Trace] ]
 	end
 .
-
-cast(World, Target) ->
-	cast(World, Target, #coords{x=0, y=0, z=0}, 0, #color{r = 128, g = 128, b = 128}) .
 
 chooseClosest([]) -> {undefined, undefined, undefined, undefined};
 chooseClosest([H|_]) -> H.
@@ -71,7 +79,7 @@ traceWorker(Main, ThreadServer) ->
 		receive
 			{ done } -> ok;
 			{ job, Index, Amount, Scene, CanvasSize, Width, Height } ->
-				io:format("traceWorker() PID ~w, Index ~w~n", [self(), Index]),
+				io:format("traceWorker() PID ~w, Index ~w (~w %)~n", [self(), Index, trunc(Index/CanvasSize * 100)]),
 				Upper = if
 					Index+Amount >= CanvasSize -> CanvasSize-1;
 					true -> Index+Amount-1
@@ -79,7 +87,7 @@ traceWorker(Main, ThreadServer) ->
 				Values = lists:map(
 					fun(At) ->
 						Pixel = #coords{x=-Width/2+At rem Width, y=-Height/2+At div Height, z=-300},
-						cast(Scene, Pixel)
+						cast(Scene, Pixel, #coords{})
 					end,
 					lists:seq(Index, Upper)
 				),
@@ -122,7 +130,7 @@ collect(Index, CanvasSize, List) ->
 %  Passes: the number of rays cast per px
 %  returns: list of px values
 trace(Scene, {Width, Height}, 1) ->
-	PIXELS_AT_ONCE = 65536,
+	PIXELS_AT_ONCE = 16384,
 	THREAD_COUNT = 8,
 	
 	Main = self(),
