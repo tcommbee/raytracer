@@ -22,9 +22,9 @@ cast(World, StartPos, Target, Depth) ->
 			)
 	),
 	if
-		not is_record(Impact, coords) -> if Depth == 0 #color{r = 0, g = 70, b = 12}; true -> 10000 end;
+		not is_record(Impact, coords) -> if Depth == 0 -> #color{r = 0, g = 0, b = 0}; true -> #color{r = 128, g = 128, b = 128}  end;
 		Obstacle#sphere.light == false ->
-			colorMul(Obstacle#sphere.color, cast(World, Impact, reflect(Obstacle, StartPos, Impact)));
+			colorMul(Obstacle#sphere.color, cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth + 1));
 		Obstacle#sphere.light == true  -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact, ShortestPoint);
 		true -> 33
 	end
