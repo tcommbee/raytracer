@@ -16,7 +16,7 @@ cast(World, StartPos, Target) ->
 				fun({_,_,A},{_,_,B}) -> A =< B end,
 				lists:filter(
 					fun({_, Intersection, Y})->(Y > 0) and is_record(Intersection,coords) end,
-				intersections(World, StartPos, Target)
+					intersections(World, StartPos, Target)
 			)
 		)
 	),
@@ -35,7 +35,8 @@ chooseClosest([H|_]) -> H.
 lightness(LightSource, StartPos, Impact) ->
 	MinDistanceToCenter = vectorMul(LightSource#sphere.coords - StartPos, Impact - StartPos)/vectorAbs(Impact - startPos),
 	LightIntensity = 1000,
-	LightIntensity * math:sqrt(math:sqr(LightSource#sphere.radius) - math:sqr(MinDistanceToCenter)).
+	R = LightSource#sphere.radius,
+	LightIntensity * math:sqrt(R*R - MinDistanceToCenter*MinDistanceToCenter).
 
 reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
 	A = vectorSub(Impact, StartPos),
@@ -80,7 +81,7 @@ traceToFile(File, Scene, {Width, Height}, Passes) ->
 prep(List) ->
         lists:map(fun(E) -> integer_to_list(E) ++ ["\n"] end, List).
 
-vectorSqr(#coords{x=X, y=Y, z=Z}) -> X*X + Y*Y + Z*Z .
+vectorSqr(#coords{x=X, y=Y, z=Z}) when is_number(X), is_number(Y), is_number(Z) -> (X*X + Y*Y + Z*Z).
 vectorMul(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> A*X + B*Y + C*Z .
 scalarMul(#coords{x=X, y=Y, z=Z}, L) -> #coords{x=L*X, y=L*Y, z=L*Z} .
 vectorAbs(V) -> math:sqrt( vectorSqr(V) ) .
@@ -101,13 +102,11 @@ intersect(Object, StartPos, Target) ->
 	
 	L = if
 		Right  < 0        -> undefined;
-		Right == 0        -> Left;
-		Left - Right =< 0 -> Left + Right;
-		true              -> Right - Left
+		true              -> Left-math:sqrt(Right)
 	end,
 	
 	if
-		(L == undefined) or (L =< 0)  -> {Object, undefined, -1};
+		(L == undefined) -> {Object, undefined, L};
 		true -> {Object, vectorAdd(scalarMul(ST, -L), StartPos), L}
 	end
 .
@@ -115,7 +114,12 @@ intersect(Object, StartPos, Target) ->
 test(X) ->
 	trace(
 		[
-			#sphere{radius=50, coords = #coords{x=0,y=0,z=-150}}
+			#sphere{radius=99999, coords = #coords{x=0,y=0,z=-120000}, light = true},
+			#sphere{radius=99999, coords = #coords{x=0,y=0,z=120000}, light = true},
+			#sphere{radius=99999, coords = #coords{x=0,y=-120000,z=0}, light = true},
+			#sphere{radius=99999, coords = #coords{x=0,y=-120000,z=0}, light = true},
+			#sphere{radius=99999, coords = #coords{x=-120000,y=0,z=0}, light = true},
+			#sphere{radius=99999, coords = #coords{x=120000,y=0,z=0}, light = true}
 		],
 		{X,X},
 		1
