@@ -1,8 +1,9 @@
 -module(raytracer).
 -export([trace/3, traceToFile/4, test/1,intersect/3]).
 
+-record(color, {r = 0, g = 0, b = 0}).
 -record(coords, {x = 0, y = 0, z = 0}).
--record(sphere, {radius = 1, coords = #coords{}, light = false}).
+-record(sphere, {radius = 1, coords = #coords{}, light = false, color = #color{}}).
 
 %cast a ray
 %  World: a list of geometry and lightsources the ray is cast into
@@ -21,8 +22,9 @@ cast(World, StartPos, Target) ->
 			)
 	),
 	if
-		not is_record(Impact, coords) -> 22;
-		Obstacle#sphere.light == false -> 0.6 * cast(World, Impact, reflect(Obstacle, StartPos, Impact));
+		not is_record(Impact, coords) -> #color{r = 0, g = 70, b = 12};
+		Obstacle#sphere.light == false ->
+			colorMul(Obstacle#sphere.color, cast(World, Impact, reflect(Obstacle, StartPos, Impact)));
 		Obstacle#sphere.light == true  -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact, ShortestPoint);
 		true -> 33
 	end
@@ -35,10 +37,9 @@ chooseClosest([H|_]) -> H.
 lightness(LightSource, StartPos, Impact, ShortestPoint) ->
 	A = vectorAdd(ShortestPoint, StartPos),
 	MinDistanceToCenter = vectorAbs(vectorSub(LightSource#sphere.coords, A)),
-	LightIntensity = 255,
+	LightIntensity = LightSource#sphere.color,
 	R = LightSource#sphere.radius,
-	LightIntensity * math:sqrt(R*R - MinDistanceToCenter*MinDistanceToCenter)/R.
-	% 1000.
+	colorScale(LightIntensity, math:sqrt(R*R - MinDistanceToCenter*MinDistanceToCenter)/R).
 
 reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
 	A = vectorSub(Impact, StartPos),
@@ -68,18 +69,21 @@ trace(Scene, {Width, Height}, 1) ->
 
 
 traceToFile(File, Scene, {Width, Height}, Passes) ->
-        Picture = trace(Scene, {Width, Height}, Passes),
-        Out = prep([Width, Height, 255] ++ Picture),
-        case file:open(File, [write]) of
-                {ok, Fd} ->
-                        file:write(Fd, ["P2\n", "# Erlang Raytracer Output\n"] ++ Out),
-                        file:close(Fd);
-                {error, R} ->
-                        exit(R)
-        end.
+	Picture = trace(Scene, {Width, Height}, Passes),
+	Out = prep([Width, Height, 255] ++ lists:flatten(lists:map(fun colorToList/1, Picture))),
+	case file:open(File, [write]) of
+		{ok, Fd} ->
+			file:write(Fd, ["P3\n", "# Erlang Raytracer Output\n"] ++ Out),
+			file:close(Fd);
+		{error, R} ->
+			exit(R)
+	end
+.
+
+colorToList(#color{r=R, g=G, b=B}) -> [R,G,B].
 
 prep(List) ->
-        lists:map(fun(E) -> integer_to_list(trunc(E)) ++ ["\n"] end, List).
+	lists:map(fun(R) -> integer_to_list(trunc(R)) ++ ["\n"] end, List).
 
 vectorSqr(#coords{x=X, y=Y, z=Z}) -> (X*X + Y*Y + Z*Z).
 vectorMul(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> A*X + B*Y + C*Z .
@@ -87,6 +91,11 @@ scalarMul(#coords{x=X, y=Y, z=Z}, L) -> #coords{x=L*X, y=L*Y, z=L*Z} .
 vectorAbs(V) -> math:sqrt( vectorSqr(V) ) .
 vectorAdd(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> #coords{x=A+X, y=B+Y, z=C+Z} .
 vectorSub(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> #coords{x=X-A, y=Y-B, z=Z-C} .
+
+colorMul(#color{r=R1,g=G1,b=B1}, #color{r=R2,g=G2,b=B2}) ->
+	#color{r=R1*R2, g=G1*G2, b=B1*B2}.
+colorScale(#color{r=R,g=G,b=B}, S) ->
+	#color{r=R*S, g=G*S, b=B*S}.
 
 intersect(Object, StartPos, Target) ->
 	CS = vectorSub(Object#sphere.coords, StartPos),
@@ -116,11 +125,11 @@ intersect(Object, StartPos, Target) ->
 test(X) ->
 	traceToFile("X.pnm",
 		[
-			#sphere{radius=2000, coords = #coords{x=0,y=0,z=-12000}, light = true},
-			#sphere{radius=2000, coords = #coords{x=0,y=4000,z=-12000}, light = false},
-			#sphere{radius=2000, coords = #coords{x=4000,y=0,z=-12000}, light = false},
-			#sphere{radius=2000, coords = #coords{x=4000,y=4000,z=-12000}, light = false},
-			#sphere{radius=3000, coords = #coords{x=2000,y=2000,z=-20000}, light = false}
+			#sphere{radius=2000, coords = #coords{x=0,y=0,z=-12000}, light = true, color = #color{r=255,g=255,b=255}},
+			#sphere{radius=2000, coords = #coords{x=0,y=4000,z=-12000}, light = false, color = #color{r=1,g=0,b=0}},
+			#sphere{radius=2000, coords = #coords{x=4000,y=0,z=-12000}, light = false, color = #color{r=0,g=0,b=1}},
+			#sphere{radius=2000, coords = #coords{x=4000,y=4000,z=-12000}, light = false, color = #color{r=0.5,g=0.5,b=0.5}},
+			#sphere{radius=3000, coords = #coords{x=2000,y=2000,z=-20000}, light = false, color = #color{r=1,g=1,b=1}}
 			%#sphere{radius=99999, coords = #coords{x=0,y=120000,z=0}, light = true},
 			%#sphere{radius=99999, coords = #coords{x=-120000,y=0,z=0}, light = true},
 			%#sphere{radius=99999, coords = #coords{x=120000,y=0,z=0}, light = true}
