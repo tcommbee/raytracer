@@ -22,17 +22,11 @@ cast(World, Target, StartPos, Depth, Color) ->
 		)
 	),
 	if
-		not is_record(Impact, coords) ->
-			if
-				Depth == 0 -> #color{r = 0, g = 0, b = 0};
-				true -> Color
-			end;
+		not is_record(Impact, coords) and depth > 0 -> #color{r = 15, g = 15, b = 15};
+		not is_record(Impact, coords)-> #color{r = 15, g = 15, b = 15};
 		Obstacle#sphere.light == false ->
-			Reflection = reflect(Obstacle, StartPos, Impact),
-			NewColor = colorMul(Obstacle#sphere.color, Color),
-			cast(World, Reflection, Impact, Depth + 1, NewColor);
-		true ->  % i.e. Obstacle#sphere.light == true
-			lightness(Obstacle, StartPos, Impact, ShortestPoint)
+			colorMul(Obstacle#sphere.color, cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth+1));
+		Obstacle#sphere.light == true  -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact, ShortestPoint);
 	end
 .
 
@@ -43,7 +37,7 @@ chooseClosest([]) -> {undefined, undefined, undefined, undefined};
 chooseClosest([H|_]) -> H.
 
 %assumes that vector intersect LightSource!
-lightness(LightSource, StartPos, Impact, ShortestPoint) ->
+lightness(LightSource, StartPos, _, ShortestPoint) ->
 	A = vectorAdd(ShortestPoint, StartPos),
 	MinDistanceToCenter = vectorAbs(vectorSub(LightSource#sphere.coords, A)),
 	LightIntensity = LightSource#sphere.color,
@@ -65,11 +59,13 @@ intersections([First|RestOfWorld], StartPos, Target) -> [intersect(First, StartP
 %  ThreadServer: PID of process to ask for pixels to render
 traceWorker(Main, ThreadServer) ->
 	receive
-		{done } -> ok
+		{ done } ->
+			ok
 	after 0 ->
 		ThreadServer ! { getJob, self() },
 		receive
-			{ done } -> ok;
+			{ done } ->
+				ok;
 			{ job, Index, Amount, Scene, CanvasSize, Width, Height } ->
 				io:format("traceWorker() PID ~w, Index ~w~n", [self(), Index]),
 				Upper = if
@@ -122,7 +118,7 @@ collect(Index, CanvasSize, List) ->
 %  Passes: the number of rays cast per px
 %  returns: list of px values
 trace(Scene, {Width, Height}, 1) ->
-	PIXELS_AT_ONCE = 65536,
+	PIXELS_AT_ONCE = 8096,
 	THREAD_COUNT = 8,
 	
 	Main = self(),
@@ -139,7 +135,6 @@ trace(Scene, {Width, Height}, 1) ->
 	ThreadServer ! {done},
 	Result
 .
-
 
 traceToFile(File, Scene, {Width, Height}, Passes) ->
 	Picture = trace(Scene, {Width, Height}, Passes),
@@ -195,14 +190,15 @@ intersect(Object, StartPos, Target) ->
 test(X) ->
 	traceToFile("X.pnm",
 		[
-			#sphere{radius=2000, coords = #coords{x=0,y=0,z=-12000}, light = true, color = #color{r=255,g=255,b=255}},
-			#sphere{radius=2000, coords = #coords{x=0,y=4000,z=-12000}, light = false, color = #color{r=1,g=0,b=0}},
-			#sphere{radius=2000, coords = #coords{x=4000,y=0,z=-12000}, light = false, color = #color{r=0,g=0,b=1}},
-			#sphere{radius=2000, coords = #coords{x=4000,y=4000,z=-12000}, light = false, color = #color{r=0.5,g=0.5,b=0.5}},
-			#sphere{radius=3000, coords = #coords{x=2000,y=2000,z=-20000}, light = false, color = #color{r=1,g=1,b=1}}
-			%#sphere{radius=99999, coords = #coords{x=0,y=120000,z=0}, light = true},
-			%#sphere{radius=99999, coords = #coords{x=-120000,y=0,z=0}, light = true},
-			%#sphere{radius=99999, coords = #coords{x=120000,y=0,z=0}, light = true}
+			#sphere{radius=3000, coords = #coords{x=0,y=0,z=-8000}, light = false, color = #color{r=1,g=1,b=1}},
+			#sphere{radius=600, coords = #coords{x=-2000,y=-2200,z=-6000}, light = true, color = #color{r=255,g=255,b=255}},
+			#sphere{radius=600, coords = #coords{x=0,y=-2200,z=-5000}, light = false, color = #color{r=1,g=1,b=1}},
+			#sphere{radius=600, coords = #coords{x=2000,y=-2200,z=-4000}, light = true, color = #color{r=255,g=0,b=0}},
+			#sphere{radius=600, coords = #coords{x=-2000,y=0,z=-5000}, light = true, color = #color{r=100,g=0,b=255}},
+			#sphere{radius=600, coords = #coords{x=2000,y=-0,z=-5000}, light = true, color = #color{r=255,g=255,b=0}},
+			#sphere{radius=600, coords = #coords{x=-2000,y=2200,z=-6000}, light = true, color = #color{r=128,g=255,b=0}},
+			#sphere{radius=600, coords = #coords{x=0,y=2200,z=-5000}, light = false, color = #color{r=1,g=1,b=1}},
+			#sphere{radius=600, coords = #coords{x=2000,y=2200,z=-4000}, light = true, color = #color{r=0,g=0,b=255}}
 		],
 		{X,X},
 		1
