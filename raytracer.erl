@@ -9,8 +9,8 @@
 %  StartPos: current "position" of ray
 %  Target: point the ray is directed at
 %  returns: lightness as number
-cast([], _, _) -> 0;
-cast(World, StartPos, Target) ->
+cast([], _, _, _) -> 0;
+cast(World, StartPos, Target, Depth) ->
 	{Obstacle, Impact, _, ShortestPoint} = chooseClosest(
 			lists:sort(
 				fun({_,_,A,_},{_,_,B,_}) -> A =< B end,
@@ -21,8 +21,8 @@ cast(World, StartPos, Target) ->
 			)
 	),
 	if
-		not is_record(Impact, coords) -> 22;
-		Obstacle#sphere.light == false -> 0.6 * cast(World, Impact, reflect(Obstacle, StartPos, Impact));
+		not is_record(Impact, coords) -> if Depth == 0 -> 0; true -> 10000 end;
+		Obstacle#sphere.light == false -> 0.6 * cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth + 1);
 		Obstacle#sphere.light == true  -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact, ShortestPoint);
 		true -> 33
 	end
@@ -35,7 +35,7 @@ chooseClosest([H|_]) -> H.
 lightness(LightSource, StartPos, Impact, ShortestPoint) ->
 	A = vectorAdd(ShortestPoint, StartPos),
 	MinDistanceToCenter = vectorAbs(vectorSub(LightSource#sphere.coords, A)),
-	LightIntensity = 255,
+	LightIntensity = 65536,
 	R = LightSource#sphere.radius,
 	LightIntensity * math:sqrt(R*R - MinDistanceToCenter*MinDistanceToCenter)/R.
 	% 1000.
@@ -58,7 +58,7 @@ intersections([First|RestOfWorld],StartPos,Target	)->[intersect(First, StartPos,
 trace(Scene, {Width, Height}, 1) ->
 	lists:map(
 		fun(A)->
-			cast(Scene, #coords{x=0, y=0, z=0}, A) end,
+			cast(Scene, #coords{x=0, y=0, z=0}, A, 0) end,
 			lists:map(
 				fun(X) -> #coords{x=-250 + ((X rem Width) * 500)/Width, y=-250 + ((X div Height) * 500)/Height, z=-300} end,
 				lists:seq(0, Width*Height)
@@ -69,7 +69,7 @@ trace(Scene, {Width, Height}, 1) ->
 
 traceToFile(File, Scene, {Width, Height}, Passes) ->
         Picture = trace(Scene, {Width, Height}, Passes),
-        Out = prep([Width, Height, 255] ++ Picture),
+        Out = prep([Width, Height, 65536] ++ Picture),
         case file:open(File, [write]) of
                 {ok, Fd} ->
                         file:write(Fd, ["P2\n", "# Erlang Raytracer Output\n"] ++ Out),
@@ -116,11 +116,11 @@ intersect(Object, StartPos, Target) ->
 test(X) ->
 	traceToFile("X.pnm",
 		[
-			#sphere{radius=2000, coords = #coords{x=0,y=0,z=-12000}, light = true},
-			#sphere{radius=2000, coords = #coords{x=0,y=4000,z=-12000}, light = false},
-			#sphere{radius=2000, coords = #coords{x=4000,y=0,z=-12000}, light = false},
-			#sphere{radius=2000, coords = #coords{x=4000,y=4000,z=-12000}, light = false},
-			#sphere{radius=3000, coords = #coords{x=2000,y=2000,z=-20000}, light = false}
+			#sphere{radius=2000, coords = #coords{x=0,y=0,z=-6000}, light = true},
+			#sphere{radius=2000, coords = #coords{x=0,y=4000,z=-6000}, light = false},
+			#sphere{radius=2000, coords = #coords{x=4000,y=0,z=-6000}, light = false},
+			#sphere{radius=2000, coords = #coords{x=4000,y=4000,z=-6000}, light = false}
+			%#sphere{radius=6000, coords = #coords{x=2000,y=2000,z=-14000}, light = false}
 			%#sphere{radius=99999, coords = #coords{x=0,y=120000,z=0}, light = true},
 			%#sphere{radius=99999, coords = #coords{x=-120000,y=0,z=0}, light = true},
 			%#sphere{radius=99999, coords = #coords{x=120000,y=0,z=0}, light = true}
