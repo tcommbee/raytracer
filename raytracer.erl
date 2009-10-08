@@ -10,8 +10,8 @@
 %  StartPos: current "position" of ray
 %  Target: point the ray is directed at
 %  returns: lightness as number
-cast([], _, _) -> 0;
-cast(World, StartPos, Target) ->
+cast([], _, _, _) -> 0;
+cast(World, StartPos, Target, Depth) ->
 	{Obstacle, Impact, _, ShortestPoint} = chooseClosest(
 			lists:sort(
 				fun({_,_,A,_},{_,_,B,_}) -> A =< B end,
@@ -22,7 +22,7 @@ cast(World, StartPos, Target) ->
 			)
 	),
 	if
-		not is_record(Impact, coords) -> #color{r = 0, g = 70, b = 12};
+		not is_record(Impact, coords) -> if Depth == 0 #color{r = 0, g = 70, b = 12}; true -> 10000 end;
 		Obstacle#sphere.light == false ->
 			colorMul(Obstacle#sphere.color, cast(World, Impact, reflect(Obstacle, StartPos, Impact)));
 		Obstacle#sphere.light == true  -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact, ShortestPoint);
@@ -59,7 +59,7 @@ intersections([First|RestOfWorld],StartPos,Target	)->[intersect(First, StartPos,
 trace(Scene, {Width, Height}, 1) ->
 	lists:map(
 		fun(A)->
-			cast(Scene, #coords{x=0, y=0, z=0}, A) end,
+			cast(Scene, #coords{x=0, y=0, z=0}, A, 0) end,
 			lists:map(
 				fun(X) -> #coords{x=-250 + ((X rem Width) * 500)/Width, y=-250 + ((X div Height) * 500)/Height, z=-300} end,
 				lists:seq(0, Width*Height)
