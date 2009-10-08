@@ -1,5 +1,5 @@
 -module(raytracer).
--export([trace/3]).
+-export([trace/3, traceToFile/4]).
 
 -record(coords, {x = 0, y = 0, z = 0}).
 -record(sphere, {radius = 1, coords = #coords{}, light = false}).
@@ -57,6 +57,24 @@ trace(Scene, {Width, Height}, Passes) ->
 			)
 	)
 .
+
+
+trace_dummy(Scene, _, _) -> Scene.
+
+
+traceToFile(File, Scene, {Width, Height}, Passes) ->
+        Picture = trace_dummy(Scene, {Width, Height}, Passes),
+        Out = prep([Width, Height, 255] ++ Picture),
+        case file:open(File, [write]) of
+                {ok, Fd} ->
+                        file:write(Fd, ["P2\n", "# Erlang Raytracer Output\n"] ++ Out),
+                        file:close(Fd);
+                {error, R} ->
+                        exit(R)
+        end.
+
+prep(List) ->
+        lists:map(fun(E) -> integer_to_list(E) ++ ["\n"] end, List).
 
 vectorSqr(#coords{x=X, y=Y, z=Z}) -> X*X + Y*Y + Z*Z .
 vectorMul(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> A*X + B*Y + C*Z .
