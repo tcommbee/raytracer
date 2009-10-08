@@ -28,7 +28,7 @@ cast(World, StartPos, Target) ->
 	end
 .
 
-%chooseClosest([]) -> {undefined, undefined, undefined};
+chooseClosest([]) -> {undefined, undefined, undefined, undefined};
 chooseClosest([H|_]) -> H.
 
 %assumes that vector intersect LightSource!
@@ -77,7 +77,7 @@ traceToFile(File, Scene, {Width, Height}, Passes) ->
         end.
 
 prep(List) ->
-        lists:map(fun(E) -> integer_to_list(E) ++ ["\n"] end, List).
+        lists:map(fun(E) -> integer_to_list(trunc(E)) ++ ["\n"] end, List).
 
 vectorSqr(#coords{x=X, y=Y, z=Z}) -> (X*X + Y*Y + Z*Z).
 vectorMul(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> A*X + B*Y + C*Z .
@@ -112,10 +112,10 @@ intersect(Object, StartPos, Target) ->
 .
 
 test(X) ->
-	trace(
+	traceToFile("X.pnm",
 		[
-			#sphere{radius=99999, coords = #coords{x=0,y=0,z=-120000}, light = true},
-			#sphere{radius=99999, coords = #coords{x=0,y=0,z=120000}, light = true},
+			#sphere{radius=2000, coords = #coords{x=0,y=0,z=-120000}, light = true},
+			#sphere{radius=2000, coords = #coords{x=0,y=2000,z=-120000}, light = true},
 			#sphere{radius=99999, coords = #coords{x=0,y=-120000,z=0}, light = true},
 			#sphere{radius=99999, coords = #coords{x=0,y=120000,z=0}, light = true},
 			#sphere{radius=99999, coords = #coords{x=-120000,y=0,z=0}, light = true},
