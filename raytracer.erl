@@ -11,7 +11,7 @@
 %  Target: point the ray is directed at
 %  Depth: shall be 1 in first step
 %  returns: lightness as number
-cast(World, Target, StartPos, Depth, Color) ->
+cast(World, Target, StartPos, Depth) ->
 	{Obstacle, Impact, _, ShortestPoint} = chooseClosest(
 		lists:sort(
 			fun({_,_,A,_},{_,_,B,_}) -> A =< B end,
@@ -26,12 +26,12 @@ cast(World, Target, StartPos, Depth, Color) ->
 		not is_record(Impact, coords)-> #color{r = 15, g = 15, b = 15};
 		Obstacle#sphere.light == false ->
 			colorMul(Obstacle#sphere.color, cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth+1));
-		Obstacle#sphere.light == true  -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact, ShortestPoint);
+		Obstacle#sphere.light == true -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact, ShortestPoint)
 	end
 .
 
 cast(World, Target) ->
-	cast(World, Target, #coords{x=0, y=0, z=0}, 0, #color{r = 128, g = 128, b = 128}) .
+	cast(World, #coords{x=0, y=0, z=0}, Target, 0) .
 
 chooseClosest([]) -> {undefined, undefined, undefined, undefined};
 chooseClosest([H|_]) -> H.
