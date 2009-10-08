@@ -11,25 +11,33 @@
 %  Target: point the ray is directed at
 %  Depth: shall be 1 in first step
 %  returns: lightness as number
-cast([], _, _, _) -> 0;
-cast(World, StartPos, Target, Depth) ->
+cast(World, Target, StartPos, Depth, Color) ->
 	{Obstacle, Impact, _, ShortestPoint} = chooseClosest(
-			lists:sort(
-				fun({_,_,A,_},{_,_,B,_}) -> A =< B end,
-				lists:filter(
-					fun({_, Intersection, Y, _})->(Y > 0) and is_record(Intersection,coords) end,
-					intersections(World, StartPos, Target)
-				)
+		lists:sort(
+			fun({_,_,A,_},{_,_,B,_}) -> A =< B end,
+			lists:filter(
+				fun({_, Intersection, Y, _})->(Y > 0) and is_record(Intersection,coords) end,
+				intersections(World, StartPos, Target)
 			)
+		)
 	),
 	if
-		not is_record(Impact, coords) -> if Depth == 0 -> #color{r = 0, g = 0, b = 0}; true -> #color{r = 128, g = 128, b = 128}  end;
+		not is_record(Impact, coords) ->
+			if
+				Depth == 0 -> #color{r = 0, g = 0, b = 0};
+				true -> Color
+			end;
 		Obstacle#sphere.light == false ->
-			colorMul(Obstacle#sphere.color, cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth + 1));
-		Obstacle#sphere.light == true  -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact, ShortestPoint);
-		true -> 33
+			Reflection = reflect(Obstacle, StartPos, Impact),
+			NewColor = colorMul(Obstacle#sphere.color, Color),
+			cast(World, Reflection, Impact, Depth + 1, NewColor);
+		true ->  % i.e. Obstacle#sphere.light == true
+			lightness(Obstacle, StartPos, Impact, ShortestPoint)
 	end
 .
+
+cast(World, Target) ->
+	cast(World, Target, #coords{x=0, y=0, z=0}, 0, #color{r = 128, g = 128, b = 128}) .
 
 chooseClosest([]) -> {undefined, undefined, undefined, undefined};
 chooseClosest([H|_]) -> H.
@@ -71,7 +79,7 @@ traceWorker(Main, ThreadServer) ->
 				Values = lists:map(
 					fun(At) ->
 						Pixel = #coords{x=-Width/2+At rem Width, y=-Height/2+At div Height, z=-300},
-						cast(Scene, #coords{x=0, y=0, z=0}, Pixel, 0)
+						cast(Scene, Pixel)
 					end,
 					lists:seq(Index, Upper)
 				),
@@ -167,15 +175,12 @@ intersect(Object, StartPos, Target) ->
 	ST = vectorSub(StartPos, Target),
 	R2 = Object#sphere.radius * Object#sphere.radius,
 	
-	
 	ST2 = vectorSqr(ST),
 	CS2 = vectorSqr(CS),
 	CStST = vectorMul(CS, ST),
 	
-	
 	Left = - (CStST / ST2),
 	Right = (Left*Left) + ((R2-CS2)/ST2),
-	
 	
 	L = if
 		Right  < 0        -> undefined;
