@@ -65,12 +65,9 @@ trace(Scene, {Width, Height}, 1) ->
 .
 
 
-trace_dummy(Scene, _, _) -> Scene.
-
-
 traceToFile(File, Scene, {Width, Height}, Passes) ->
-        Picture = trace_dummy(Scene, {Width, Height}, Passes),
-        Out = prep([Width, Height, 255] ++ Picture),
+        Picture = trace(Scene, {Width, Height}, Passes),
+        Out = prep([Width, Height, 1000] ++ Picture),
         case file:open(File, [write]) of
                 {ok, Fd} ->
                         file:write(Fd, ["P2\n", "# Erlang Raytracer Output\n"] ++ Out),
