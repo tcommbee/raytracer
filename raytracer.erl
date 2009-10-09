@@ -34,8 +34,10 @@ cast(World, StartPos, Target, Depth) ->
 			end;
 		not is_record(Impact, coords)-> #color{r = 67, g = 111, b = 140};
 		Obstacle#sphere.light == false ->
-			LightColor = cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth+1),
-			C = Obstacle#sphere.color, colorMul(C, LightColor);
+			Glow = colorScale(Obstacle#sphere.color, 0.1*255),
+			LightColor = colorScale(cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth+1), 0.9),
+			Combined = colorAdd(Glow, LightColor),
+			C = Obstacle#sphere.color, colorMul(C, Combined);
 		Obstacle#sphere.light == true -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact, ShortestPoint)
 	end.
 
