@@ -5,6 +5,9 @@
 -record(coords, {x = 0, y = 0, z = 0}).
 -record(sphere, {radius = 1, coords = #coords{}, light = false, color = #color{}}).
 
+-define(PIXELS_AT_ONCE, trunc(math:pow(2,10))).
+-define(THREAD_COUNT, 5).
+
 %cast a ray
 %  World: a list of geometry and lightsources the ray is cast into
 %  StartPos: current "position" of ray
@@ -22,7 +25,14 @@ cast(World, StartPos, Target, Depth) ->
 		)
 	),
 	if
-		not is_record(Impact, coords)-> #color{r = 0, g = 0, b = 0};
+		not is_record(Impact, coords), Depth > 0 ->
+			Dir = vectorSub(Target, StartPos),
+			Z = vectorMul(Dir, #coords{x=0.707106781,y=-0.707106781,z=0})/vectorAbs(Dir),
+			if
+				Z < 0 -> #color{r=0,g=0,b=0};
+				true -> colorScale(#color{r = 30, g = 30, b = 30}, Z*Z)
+			end;
+		not is_record(Impact, coords)-> #color{r = 0, g = 0, b = 120};
 		Obstacle#sphere.light == false ->
 			LightColor = cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth+1),
 			C = Obstacle#sphere.color, colorMul(C, LightColor);
@@ -55,15 +65,13 @@ reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
 %  ThreadServer: PID of process to ask for pixels to render
 traceWorker(Main, ThreadServer) ->
 	receive
-		{ done } ->
-			ok
+		{done } -> ok
 	after 0 ->
 		ThreadServer ! { getJob, self() },
 		receive
-			{ done } ->
-				ok;
+			{ done } -> ok;
 			{ job, Index, Amount, Scene, CanvasSize, Width, Height } ->
-				io:format("traceWorker() PID ~w, Index ~w~n", [self(), Index]),
+				io:format("traceWorker() PID ~w, Index ~w (~w %)~n", [self(), Index, trunc(Index/CanvasSize * 100)]),
 				Upper = if
 					Index+Amount >= CanvasSize -> CanvasSize-1;
 					true -> Index+Amount-1
@@ -113,14 +121,11 @@ collect(Index, CanvasSize, Fd) ->
 %  Dimensions: of the output image in px
 %  returns: nothing
 trace(File, Scene, {Width, Height}) ->
-	PIXELS_AT_ONCE = trunc(math:pow(2,10)),
-	THREAD_COUNT = 5,
-	
 	Main = self(),
-	ThreadServer = spawn(fun() -> threadServer(0, PIXELS_AT_ONCE, Scene, Width*Height, Width, Height) end),
+	ThreadServer = spawn(fun() -> threadServer(0, ?PIXELS_AT_ONCE, Scene, Width*Height, Width, Height) end),
 	Threads = lists:map(
 		fun(_) -> spawn(fun() -> traceWorker(Main, ThreadServer) end) end,
-		lists:seq(0, THREAD_COUNT-1)
+		lists:seq(0, ?THREAD_COUNT-1)
 	),
 	case file:open(File, [write]) of
 		{ok, Fd} ->
@@ -167,7 +172,7 @@ intersect(Object, StartPos, Target) ->
 	CS2 = vectorSqr(CS),
 	CStST = vectorMul(CS, ST),
 	
-	Left = -CStST / ST2,
+	Left = - (CStST / ST2),
 	Right = (Left*Left) + ((R2-CS2)/ST2),
 	
 	if
@@ -180,7 +185,8 @@ intersect(Object, StartPos, Target) ->
 test(X) ->
 	trace("X.pnm",
 		[
-			#sphere{radius=3000, coords = #coords{x=0,y=0,z=-8000}, light = false, color = #color{r=1,g=1,b=1}},
+			#sphere{radius=3000, coords = #coords{x=0,y=0,z=-8000}, light = false, color = #color{r=0.72,g=0.6,b=0.2}},
+			#sphere{radius=9997200, coords = #coords{x=0,y=10000000,z=-8000}, light = false, color = #color{r=0.5,g=0.5,b=0.5}},
 			#sphere{radius=600, coords = #coords{x=-2000,y=-2200,z=-6000}, light = true, color = #color{r=255,g=255,b=255}},
 			#sphere{radius=600, coords = #coords{x=0,y=-2200,z=-5000}, light = false, color = #color{r=1,g=1,b=1}},
 			#sphere{radius=600, coords = #coords{x=2000,y=-2200,z=-4000}, light = true, color = #color{r=255,g=0,b=0}},
