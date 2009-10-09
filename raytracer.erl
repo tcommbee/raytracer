@@ -107,7 +107,7 @@ threadServer(_, _, []) -> ok;
 threadServer(Index, CanvasSize, Jobs) when Index >= CanvasSize ->
 	receive
 		{getJob, Caller} ->
-			Caller ! { done }, % sent him done in either case
+			Caller ! { done }, % send him {done} in either case
 			case removeThreadJob([], Jobs, Caller) of
 				{ true, NJobs } ->
 					threadServer(Index, CanvasSize, NJobs);
