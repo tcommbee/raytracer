@@ -11,7 +11,7 @@
 %  Target: point the ray is directed at
 %  Depth: shall be 1 in first step
 %  returns: lightness as number
-cast(World, Target, StartPos, Depth) ->
+cast(World, StartPos, Target, Depth) ->
 	{Obstacle, Impact, _, ShortestPoint} = chooseClosest(
 		lists:sort(
 			fun({_,_,A,_},{_,_,B,_}) -> A =< B end,
@@ -22,10 +22,16 @@ cast(World, Target, StartPos, Depth) ->
 		)
 	),
 	if
-		not is_record(Impact, coords) and depth > 0 -> #color{r = 15, g = 15, b = 15};
-		not is_record(Impact, coords)-> #color{r = 15, g = 15, b = 15};
+		%not is_record(Impact, coords) and depth > 0 -> #color{r = 0, g = 0, b = 0};
+		not is_record(Impact, coords)-> #color{r = 0, g = 0, b = 0};
 		Obstacle#sphere.light == false ->
-			colorMul(Obstacle#sphere.color, cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth+1));
+			C = Obstacle#sphere.color,
+			%Glow = 0.05,
+			%SelfGlow = colorScale(C, 255*Glow),
+			ExternalLight = cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth+1),
+			%LightColor = colorAdd(SelfGlow, colorScale(ExternalLight,1-Glow)),
+			LightColor = ExternalLight,
+			colorMul(C, LightColor);
 		Obstacle#sphere.light == true -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact, ShortestPoint)
 	end
 .
@@ -72,14 +78,16 @@ traceWorker(Main, ThreadServer) ->
 					Index+Amount >= CanvasSize -> CanvasSize-1;
 					true -> Index+Amount-1
 				end,
+				Z = -300*Width/420,
 				Values = lists:map(
 					fun(At) ->
-						Pixel = #coords{x=-Width/2+At rem Width, y=-Height/2+At div Height, z=-300},
+						Pixel = #coords{x=-Width/2+At rem Width, y=-Height/2+At div Height, z=Z},
 						cast(Scene, Pixel)
 					end,
 					lists:seq(Index, Upper)
 				),
 				Main ! { pixels, Index, Amount, Values },
+				io:format("traceWorker() PID ~w, Index ~w finished~n", [self(), Index]),
 				traceWorker(Main, ThreadServer)
 		end
 	end
@@ -118,8 +126,8 @@ collect(Index, CanvasSize, List) ->
 %  Passes: the number of rays cast per px
 %  returns: list of px values
 trace(Scene, {Width, Height}, 1) ->
-	PIXELS_AT_ONCE = 8096,
-	THREAD_COUNT = 8,
+	PIXELS_AT_ONCE = trunc(math:pow(2,10)),
+	THREAD_COUNT = 3,
 	
 	Main = self(),
 	ThreadServer = spawn(fun() -> threadServer(0, PIXELS_AT_ONCE, Scene, Width*Height, Width, Height) end),
@@ -128,6 +136,7 @@ trace(Scene, {Width, Height}, 1) ->
 		lists:seq(0, THREAD_COUNT-1)
 	),
 	Result = collect(0, Width*Height, []),
+	io:format("Main: finished collecting~n", []),
 	lists:map(
 		fun(Thread) -> Thread ! {done} end,
 		Threads
@@ -138,7 +147,9 @@ trace(Scene, {Width, Height}, 1) ->
 
 traceToFile(File, Scene, {Width, Height}, Passes) ->
 	Picture = trace(Scene, {Width, Height}, Passes),
-	Out = prep([Width, Height, 255] ++ lists:flatten(lists:map(fun colorToList/1, Picture))),
+	io:format("flattening RGB tuples...~n", []),
+	Out = prep([Width, Height, 255] ++ lists:append(lists:map(fun colorToList/1, Picture))),
+	io:format("writing file...~n", []),
 	case file:open(File, [write]) of
 		{ok, Fd} ->
 			file:write(Fd, ["P3\n", "# Erlang Raytracer Output\n"] ++ Out),
@@ -164,6 +175,8 @@ colorMul(#color{r=R1,g=G1,b=B1}, #color{r=R2,g=G2,b=B2}) ->
 	#color{r=R1*R2, g=G1*G2, b=B1*B2}.
 colorScale(#color{r=R,g=G,b=B}, S) ->
 	#color{r=R*S, g=G*S, b=B*S}.
+colorAdd(#color{r=R1,g=G1,b=B1}, #color{r=R2,g=G2,b=B2}) ->
+	#color{r=R1+R2, g=G1+G2, b=B1+B2}.
 
 intersect(Object, StartPos, Target) ->
 	CS = vectorSub(Object#sphere.coords, StartPos),
@@ -174,16 +187,15 @@ intersect(Object, StartPos, Target) ->
 	CS2 = vectorSqr(CS),
 	CStST = vectorMul(CS, ST),
 	
-	Left = - (CStST / ST2),
+	%this is -Left
+	Left = -CStST / ST2,
 	Right = (Left*Left) + ((R2-CS2)/ST2),
 	
-	L = if
-		Right  < 0        -> undefined;
-		true              -> Left-math:sqrt(Right)
-	end,
 	if
-		(L == undefined) -> {Object, undefined, L, undefined};
-		true -> {Object, vectorAdd(scalarMul(ST, -L), StartPos), L, scalarMul(ST, -Left)}
+		Right < 0 -> {undefined, undefined, undefined, undefined};
+		true ->
+			L = Left - math:sqrt(Right),
+			{Object, vectorAdd(scalarMul(ST, -L), StartPos), L, scalarMul(ST, -Left)}
 	end
 .
 
