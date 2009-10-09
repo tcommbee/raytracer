@@ -5,7 +5,7 @@
 -record(coords, {x = 0, y = 0, z = 0}).
 -record(sphere, {radius = 1, coords = #coords{}, light = false, color = #color{}}).
 
--define(PIXELS_AT_ONCE, trunc(math:pow(2,10))).
+-define(PIXELS_AT_ONCE, trunc(math:pow(2,12))).
 -define(THREAD_COUNT, 5).
 
 %cast a ray
@@ -63,14 +63,14 @@ reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
 %traceWorker rendered a range of pixels ("worker thread")
 %  Main: PID of process to receive the rendered pixels
 %  ThreadServer: PID of process to ask for pixels to render
-traceWorker(Main, ThreadServer) ->
+traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) ->
 	receive
 		{done } -> ok
 	after 0 ->
 		ThreadServer ! { getJob, self() },
 		receive
 			{ done } -> ok;
-			{ job, Index, Amount, Scene, CanvasSize, Width, Height } ->
+			{ job, Index, Amount } ->
 				io:format("traceWorker() PID ~w, Index ~w (~w %)~n", [self(), Index, trunc(Index/CanvasSize * 100)]),
 				Upper = if
 					Index+Amount >= CanvasSize -> CanvasSize-1;
@@ -85,22 +85,21 @@ traceWorker(Main, ThreadServer) ->
 					lists:seq(Index, Upper)
 				),
 				Main ! { pixels, Index, Amount, Values },
-				traceWorker(Main, ThreadServer)
+				traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height)
 		end
 	end.
 
 %threadServer anwers @traceWorker/2's request for pixels to process
 %  Index: current index (begin with 0)
 %  PixelsAtOnce: pixels to serve at once ...
-%  Scene: scene to render
 %  CanvasSize: height * width
-threadServer(Index, _, _, CanvasSize, _, _) when Index >= CanvasSize ->
+threadServer(Index, _,            CanvasSize) when Index >= CanvasSize ->
 	receive {done} -> ok end;
-threadServer(Index, PixelsAtOnce, Scene, CanvasSize, Width, Height) ->
+threadServer(Index, PixelsAtOnce, CanvasSize) ->
 	receive
 		{getJob, Caller} ->
-			Caller ! { job, Index, PixelsAtOnce, Scene, CanvasSize, Width, Height },
-			threadServer(Index+PixelsAtOnce, PixelsAtOnce, Scene, CanvasSize, Width, Height)
+			Caller ! { job, Index, PixelsAtOnce },
+			threadServer(Index+PixelsAtOnce, PixelsAtOnce, CanvasSize)
 	end.
 
 %collect collects @traceWorker/2's results
@@ -122,9 +121,10 @@ collect(Index, CanvasSize, Fd) ->
 %  returns: nothing
 trace(File, Scene, {Width, Height}) ->
 	Main = self(),
-	ThreadServer = spawn(fun() -> threadServer(0, ?PIXELS_AT_ONCE, Scene, Width*Height, Width, Height) end),
+	CanvasSize = Width*Height,
+	ThreadServer = spawn(fun() -> threadServer(0, ?PIXELS_AT_ONCE, CanvasSize) end),
 	Threads = lists:map(
-		fun(_) -> spawn(fun() -> traceWorker(Main, ThreadServer) end) end,
+		fun(_) -> spawn(fun() -> traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) end) end,
 		lists:seq(0, ?THREAD_COUNT-1)
 	),
 	case file:open(File, [write]) of
@@ -135,7 +135,7 @@ trace(File, Scene, {Width, Height}) ->
 		{error, R} ->
 			exit(R)
 	end,
-	
+
 	lists:map(
 		fun(Thread) -> Thread ! {done} end,
 		Threads
@@ -167,14 +167,14 @@ intersect(Object, StartPos, Target) ->
 	CS = vectorSub(Object#sphere.coords, StartPos),
 	ST = vectorSub(StartPos, Target),
 	R2 = Object#sphere.radius * Object#sphere.radius,
-	
+
 	ST2 = vectorSqr(ST),
 	CS2 = vectorSqr(CS),
 	CStST = vectorMul(CS, ST),
-	
+
 	Left = - (CStST / ST2),
 	Right = (Left*Left) + ((R2-CS2)/ST2),
-	
+
 	if
 		Right < 0 -> {undefined, undefined, undefined, undefined};
 		true ->
