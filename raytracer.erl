@@ -91,10 +91,12 @@ traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) ->
 		end
 	end.
 
-setThreadJob(List, [{T,_}|TS], T, I) -> [ {T,I} | List ++ TS ];
+setThreadJob(_, [], _, _) -> false;
+setThreadJob(List, [{T,_}|TS], T, I) -> {true, [ {T,I} | List ++ TS ]};
 setThreadJob(List, [T|TS], C, I) -> setThreadJob([T|List], TS, C, I) .
 
-removeThreadJob(List, [{T,_}|TS], T) -> List ++ TS;
+removeThreadJob(_, [], _) -> false;
+removeThreadJob(List, [{T,_}|TS], T) -> {true, List ++ TS};
 removeThreadJob(List, [T|TS], C) -> removeThreadJob([T|List], TS, C).
 
 %threadServer anwers @traceWorker/2's request for pixels to process
@@ -105,17 +107,27 @@ threadServer(_, _, []) -> ok;
 threadServer(Index, CanvasSize, Jobs) when Index >= CanvasSize ->
 	receive
 		{getJob, Caller} ->
-			Caller ! { done },
-			NJobs = removeThreadJob([], Jobs, Caller),
-			threadServer(Index, CanvasSize, NJobs)
+			Caller ! { done }, % sent him done in either case
+			case removeThreadJob([], Jobs, Caller) of
+				{ true, NJobs } ->
+					threadServer(Index, CanvasSize, NJobs);
+				_ ->
+					% TODO: what to do, if Caller is unknown?
+					threadServer(Index, CanvasSize, Jobs)
+			end
 	end
 ;
 threadServer(Index, CanvasSize, Jobs) ->
 	receive
 		{getJob, Caller} ->
-			Caller ! { job, Index, ?PIXELS_AT_ONCE },
-			NJobs = setThreadJob([], Jobs, Caller, Index),
-			threadServer(Index+?PIXELS_AT_ONCE, CanvasSize, NJobs)
+			case setThreadJob([], Jobs, Caller, Index) of
+				{ true, NJobs } ->
+					Caller ! { job, Index, ?PIXELS_AT_ONCE },
+					threadServer(Index+?PIXELS_AT_ONCE, CanvasSize, NJobs);
+				_ ->
+					% TODO: what to do, if Caller is unknown?
+					threadServer(Index, CanvasSize, Jobs)
+			end
 	end
 .
 
