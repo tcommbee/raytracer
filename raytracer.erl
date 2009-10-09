@@ -1,5 +1,5 @@
 -module(raytracer).
--export([trace/3, traceToFile/4, test/1,intersect/3]).
+-export([trace/3, test/1,intersect/3]).
 
 -record(color, {r = 0, g = 0, b = 0}).
 -record(coords, {x = 0, y = 0, z = 0}).
@@ -9,8 +9,8 @@
 %  World: a list of geometry and lightsources the ray is cast into
 %  StartPos: current "position" of ray
 %  Target: point the ray is directed at
-%  Depth: shall be 1 in first step
-%  returns: lightness as number
+%  Depth: recursion depth, shall be 0 in first step
+%  returns: lightness as color
 cast(World, StartPos, Target, Depth) ->
 	{Obstacle, Impact, _, ShortestPoint} = chooseClosest(
 		lists:sort(
@@ -22,22 +22,15 @@ cast(World, StartPos, Target, Depth) ->
 		)
 	),
 	if
-		%not is_record(Impact, coords) and depth > 0 -> #color{r = 0, g = 0, b = 0};
 		not is_record(Impact, coords)-> #color{r = 0, g = 0, b = 0};
 		Obstacle#sphere.light == false ->
-			C = Obstacle#sphere.color,
-			%Glow = 0.05,
-			%SelfGlow = colorScale(C, 255*Glow),
-			ExternalLight = cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth+1),
-			%LightColor = colorAdd(SelfGlow, colorScale(ExternalLight,1-Glow)),
-			LightColor = ExternalLight,
-			colorMul(C, LightColor);
+			LightColor = cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth+1),
+			C = Obstacle#sphere.color, colorMul(C, LightColor);
 		Obstacle#sphere.light == true -> LightSource = Obstacle, lightness(LightSource, StartPos, Impact, ShortestPoint)
-	end
-.
+	end.
 
 cast(World, Target) ->
-	cast(World, #coords{x=0, y=0, z=0}, Target, 0) .
+	cast(World, #coords{x=0, y=0, z=0}, Target, 0).
 
 chooseClosest([]) -> {undefined, undefined, undefined, undefined};
 chooseClosest([H|_]) -> H.
@@ -56,9 +49,6 @@ reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
 	Distance = abs(vectorMul(A, D)),
 	B = scalarMul(D, (Distance * 2) / (R*R)),
 	vectorAdd(vectorAdd(Impact, B), A).
-
-intersections([], _, _) -> [];
-intersections([First|RestOfWorld], StartPos, Target) -> [intersect(First, StartPos, Target) | intersections(RestOfWorld, StartPos, Target)].
 
 %traceWorker rendered a range of pixels ("worker thread")
 %  Main: PID of process to receive the rendered pixels
@@ -87,11 +77,9 @@ traceWorker(Main, ThreadServer) ->
 					lists:seq(Index, Upper)
 				),
 				Main ! { pixels, Index, Amount, Values },
-				io:format("traceWorker() PID ~w, Index ~w finished~n", [self(), Index]),
 				traceWorker(Main, ThreadServer)
 		end
-	end
-.
+	end.
 
 %threadServer anwers @traceWorker/2's request for pixels to process
 %  Index: current index (begin with 0)
@@ -105,29 +93,28 @@ threadServer(Index, PixelsAtOnce, Scene, CanvasSize, Width, Height) ->
 		{getJob, Caller} ->
 			Caller ! { job, Index, PixelsAtOnce, Scene, CanvasSize, Width, Height },
 			threadServer(Index+PixelsAtOnce, PixelsAtOnce, Scene, CanvasSize, Width, Height)
-	end
-.
+	end.
 
 %collect collects @traceWorker/2's results
 %  Index: current index (begin with 0)
 %  CanvasSize: height * width
-%  List: already collected pixels
-collect(Index, CanvasSize, List) when Index >= CanvasSize -> List;
-collect(Index, CanvasSize, List) ->
+%  Fd: file handle for output
+collect(Index, CanvasSize, _) when Index >= CanvasSize -> ok;
+collect(Index, CanvasSize, Fd) ->
 	receive
 		{ pixels, Index, Amount, Values } ->
-			collect(Index + Amount, CanvasSize, List ++ Values)
-	end
-.
+			file:write(Fd, prep(lists:append(lists:map(fun colorToList/1, Values)))),
+			collect(Index + Amount, CanvasSize, Fd)
+	end.
 
 %produce a raytraced image
+%  File: filename for output
 %  Scene: a list of geometry and lightsources to be rendered
 %  Dimensions: of the output image in px
-%  Passes: the number of rays cast per px
-%  returns: list of px values
-trace(Scene, {Width, Height}, 1) ->
+%  returns: nothing
+trace(File, Scene, {Width, Height}) ->
 	PIXELS_AT_ONCE = trunc(math:pow(2,10)),
-	THREAD_COUNT = 3,
+	THREAD_COUNT = 5,
 	
 	Main = self(),
 	ThreadServer = spawn(fun() -> threadServer(0, PIXELS_AT_ONCE, Scene, Width*Height, Width, Height) end),
@@ -135,34 +122,23 @@ trace(Scene, {Width, Height}, 1) ->
 		fun(_) -> spawn(fun() -> traceWorker(Main, ThreadServer) end) end,
 		lists:seq(0, THREAD_COUNT-1)
 	),
-	Result = collect(0, Width*Height, []),
-	io:format("Main: finished collecting~n", []),
+	case file:open(File, [write]) of
+		{ok, Fd} ->
+			file:write(Fd, ["P3\n", "# Erlang Raytracer Output"] ++ prep([Width, Height, 255])),
+			collect(0, Width*Height, Fd),
+			file:close(Fd);
+		{error, R} ->
+			exit(R)
+	end,
+	
 	lists:map(
 		fun(Thread) -> Thread ! {done} end,
 		Threads
 	),
-	ThreadServer ! {done},
-	Result
-.
-
-traceToFile(File, Scene, {Width, Height}, Passes) ->
-	Picture = trace(Scene, {Width, Height}, Passes),
-	io:format("flattening RGB tuples...~n", []),
-	Out = prep([Width, Height, 255] ++ lists:append(lists:map(fun colorToList/1, Picture))),
-	io:format("writing file...~n", []),
-	case file:open(File, [write]) of
-		{ok, Fd} ->
-			file:write(Fd, ["P3\n", "# Erlang Raytracer Output\n"] ++ Out),
-			file:close(Fd);
-		{error, R} ->
-			exit(R)
-	end
-.
-
-colorToList(#color{r=R, g=G, b=B}) -> [R,G,B].
+	ThreadServer ! {done}.
 
 prep(List) ->
-	lists:map(fun(R) -> integer_to_list(trunc(R)) ++ ["\n"] end, List).
+	lists:map(fun(R) -> [$\n|integer_to_list(trunc(R))] end, List).
 
 vectorSqr(#coords{x=X, y=Y, z=Z}) -> (X*X + Y*Y + Z*Z).
 vectorMul(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> A*X + B*Y + C*Z .
@@ -171,12 +147,16 @@ vectorAbs(V) -> math:sqrt( vectorSqr(V) ) .
 vectorAdd(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> #coords{x=A+X, y=B+Y, z=C+Z} .
 vectorSub(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> #coords{x=X-A, y=Y-B, z=Z-C} .
 
+colorToList(#color{r=R, g=G, b=B}) -> [R,G,B].
 colorMul(#color{r=R1,g=G1,b=B1}, #color{r=R2,g=G2,b=B2}) ->
 	#color{r=R1*R2, g=G1*G2, b=B1*B2}.
 colorScale(#color{r=R,g=G,b=B}, S) ->
 	#color{r=R*S, g=G*S, b=B*S}.
 colorAdd(#color{r=R1,g=G1,b=B1}, #color{r=R2,g=G2,b=B2}) ->
 	#color{r=R1+R2, g=G1+G2, b=B1+B2}.
+
+intersections([], _, _) -> [];
+intersections([First|RestOfWorld], StartPos, Target) -> [intersect(First, StartPos, Target) | intersections(RestOfWorld, StartPos, Target)].
 
 intersect(Object, StartPos, Target) ->
 	CS = vectorSub(Object#sphere.coords, StartPos),
@@ -187,7 +167,6 @@ intersect(Object, StartPos, Target) ->
 	CS2 = vectorSqr(CS),
 	CStST = vectorMul(CS, ST),
 	
-	%this is -Left
 	Left = -CStST / ST2,
 	Right = (Left*Left) + ((R2-CS2)/ST2),
 	
@@ -196,11 +175,10 @@ intersect(Object, StartPos, Target) ->
 		true ->
 			L = Left - math:sqrt(Right),
 			{Object, vectorAdd(scalarMul(ST, -L), StartPos), L, scalarMul(ST, -Left)}
-	end
-.
+	end.
 
 test(X) ->
-	traceToFile("X.pnm",
+	trace("X.pnm",
 		[
 			#sphere{radius=3000, coords = #coords{x=0,y=0,z=-8000}, light = false, color = #color{r=1,g=1,b=1}},
 			#sphere{radius=600, coords = #coords{x=-2000,y=-2200,z=-6000}, light = true, color = #color{r=255,g=255,b=255}},
@@ -212,7 +190,5 @@ test(X) ->
 			#sphere{radius=600, coords = #coords{x=0,y=2200,z=-5000}, light = false, color = #color{r=1,g=1,b=1}},
 			#sphere{radius=600, coords = #coords{x=2000,y=2200,z=-4000}, light = true, color = #color{r=0,g=0,b=255}}
 		],
-		{X,X},
-		1
-	)
-.
+		{X,X}
+	).
