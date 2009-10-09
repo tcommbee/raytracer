@@ -32,7 +32,7 @@ cast(World, StartPos, Target, Depth) ->
 				Z < 0 -> #color{r=0,g=0,b=0};
 				true -> colorScale(#color{r = 30, g = 30, b = 30}, Z*Z)
 			end;
-		not is_record(Impact, coords)-> #color{r = 0, g = 0, b = 120};
+		not is_record(Impact, coords)-> #color{r = 67, g = 111, b = 140};
 		Obstacle#sphere.light == false ->
 			LightColor = cast(World, Impact, reflect(Obstacle, StartPos, Impact), Depth+1),
 			C = Obstacle#sphere.color, colorMul(C, LightColor);
