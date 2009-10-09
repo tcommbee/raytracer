@@ -91,18 +91,47 @@ traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) ->
 		end
 	end.
 
+setThreadJob(List, [{T,_}|TS], T, I) -> [ {T,I} | List ++ TS ];
+setThreadJob(List, [T|TS], C, I) -> setThreadJob([T|List], TS, C, I) .
+
+removeThreadJob(List, [{T,_}|TS], T) -> List ++ TS;
+removeThreadJob(List, [T|TS], C) -> removeThreadJob([T|List], TS, C).
+
 %threadServer anwers @traceWorker/2's request for pixels to process
 %  Index: current index (begin with 0)
-%  PixelsAtOnce: pixels to serve at once ...
 %  CanvasSize: height * width
-threadServer(Index, _,            CanvasSize) when Index >= CanvasSize ->
-	receive {done} -> ok end;
-threadServer(Index, PixelsAtOnce, CanvasSize) ->
+%  Jobs: List of { PID, Index/none }
+threadServer(_, _, []) -> ok;
+threadServer(Index, CanvasSize, Jobs) when Index >= CanvasSize ->
 	receive
 		{getJob, Caller} ->
-			Caller ! { job, Index, PixelsAtOnce },
-			threadServer(Index+PixelsAtOnce, PixelsAtOnce, CanvasSize)
-	end.
+			Caller ! { done },
+			NJobs = removeThreadJob([], Jobs, Caller),
+			threadServer(Index, CanvasSize, NJobs)
+	end
+;
+threadServer(Index, CanvasSize, Jobs) ->
+	receive
+		{getJob, Caller} ->
+			Caller ! { job, Index, ?PIXELS_AT_ONCE },
+			NJobs = setThreadJob([], Jobs, Caller, Index),
+			threadServer(Index+?PIXELS_AT_ONCE, CanvasSize, NJobs)
+	end
+.
+
+startThreadServer(CanvasSize, Main, Scene, Width, Height) ->
+	ThreadServer = self(),
+	Jobs = lists:map(
+		fun(_) -> {
+			spawn_link(fun() ->
+				traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height)
+			end),
+			none
+		} end,
+		lists:seq(0, ?THREAD_COUNT-1)
+	),
+	threadServer(0, CanvasSize, Jobs)
+.
 
 %collect collects @traceWorker/2's results
 %  Index: current index (begin with 0)
@@ -124,25 +153,17 @@ collect(Index, CanvasSize, Fd) ->
 trace(File, Scene, {Width, Height}) ->
 	Main = self(),
 	CanvasSize = Width*Height,
-	ThreadServer = spawn(fun() -> threadServer(0, ?PIXELS_AT_ONCE, CanvasSize) end),
-	Threads = lists:map(
-		fun(_) -> spawn(fun() -> traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) end) end,
-		lists:seq(0, ?THREAD_COUNT-1)
-	),
+	spawn(fun() -> startThreadServer(CanvasSize, Main, Scene, Width, Height) end),
 	case file:open(File, [write]) of
 		{ok, Fd} ->
 			file:write(Fd, ["P3\n", "# Erlang Raytracer Output"] ++ prep([Width, Height, 255])),
-			collect(0, Width*Height, Fd),
+			collect(0, CanvasSize , Fd),
 			file:close(Fd);
 		{error, R} ->
 			exit(R)
 	end,
-
-	lists:map(
-		fun(Thread) -> Thread ! {done} end,
-		Threads
-	),
-	ThreadServer ! {done}.
+	ok
+.
 
 prep(List) ->
 	lists:map(fun(R) -> [$\n|integer_to_list(trunc(R))] end, List).
