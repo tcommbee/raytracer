@@ -142,18 +142,26 @@ threadServer(Index, CanvasSize, Jobs, _) when Index >= CanvasSize ->
 threadServer(Index, CanvasSize, Jobs, RestartParams) ->
 	receive
 		{'EXIT', Caller, Why} ->
-			NJobs = case isKnownThreadJob(Jobs, Caller) of
-				false -> Jobs;
+			{NJobs, NIndex} = case isKnownThreadJob(Jobs, Caller) of
+				false ->
+					{Jobs, Index};
 				true ->
 					io:format("Process ~w was killed by ~w.~nRestarting ...~n", [Caller, Why]),
 					Pid = spawnTraceWorker(RestartParams),
-					{OldIndex, New} = replaceThreadJob([], Jobs, Caller, Pid),
-					receive
-						{getJob, Pid} -> Pid ! { job, OldIndex, ?PIXELS_AT_ONCE }
-					end,
-					New
+					case {OldIndex, New} = replaceThreadJob([], Jobs, Caller, Pid) of
+						{none, New} ->
+							receive
+								{getJob, Pid} -> Pid ! { job, Index, ?PIXELS_AT_ONCE }
+							end,
+							{ New, Index+?PIXELS_AT_ONCE };
+						{OldIndex, New} -> 
+							receive
+								{getJob, Pid} -> Pid ! { job, OldIndex, ?PIXELS_AT_ONCE }
+							end,
+							{ New, Index }
+					end
 			end,
-			threadServer(Index, CanvasSize, NJobs, RestartParams);
+			threadServer(NIndex, CanvasSize, NJobs, RestartParams);
 		{getJob, Caller} ->
 			case setThreadJob([], Jobs, Caller, Index) of
 				false ->
