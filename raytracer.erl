@@ -89,72 +89,108 @@ traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) ->
 				Main ! { pixels, Index, Amount, Values },
 				traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height)
 		end
-	end.
+	end
+.
+
+spawnTraceWorker([Main, ThreadServer, Scene, CanvasSize, Width, Height]) ->
+	spawn_link(fun() -> traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) end)
+.
 
 setThreadJob(_, [], _, _) -> false;
-setThreadJob(List, [{T,_}|TS], T, I) -> {true, [ {T,I} | List ++ TS ]};
+setThreadJob(List, [{T,_}|TS], T, I) -> [ {T,I} | List ++ TS ];
 setThreadJob(List, [T|TS], C, I) -> setThreadJob([T|List], TS, C, I) .
 
 removeThreadJob(_, [], _) -> false;
-removeThreadJob(List, [{T,_}|TS], T) -> {true, List ++ TS};
-removeThreadJob(List, [T|TS], C) -> removeThreadJob([T|List], TS, C).
+removeThreadJob(List, [{T,_}|TS], T) -> List ++ TS;
+removeThreadJob(List, [T|TS], C) -> removeThreadJob([T|List], TS, C) .
+
+replaceThreadJob(_, [], Old, New) -> throw({thread_to_replace_is_unknown, [Old, New]});
+replaceThreadJob(List, [{Old,Index}|TS], Old, New) -> {Index, List ++ [{New,Index}|TS]};
+replaceThreadJob(List, [T|TS], Old, New) -> replaceThreadJob([T|List], TS, Old, New) .
+
+isKnownThreadJob([], _) -> false;
+isKnownThreadJob([T|_], T) -> true;
+isKnownThreadJob([T|TS], C) -> isKnownThreadJob(TS, C) .
 
 %threadServer anwers @traceWorker/2's request for pixels to process
 %  Index: current index (begin with 0)
 %  CanvasSize: height * width
 %  Jobs: List of { PID, Index/none }
-threadServer(_, _, []) -> ok;
-threadServer(Index, CanvasSize, Jobs) when Index >= CanvasSize ->
+threadServer(_, _, [], _) -> ok;
+threadServer(Index, CanvasSize, Jobs, _) when Index >= CanvasSize ->
 	receive
+		{'EXIT', Caller, _} ->
+			case removeThreadJob([], Jobs, Caller) of
+				false ->
+					% I don't know the killed one, so I've nothing to do
+					threadServer(Index, CanvasSize, Jobs, []);
+				NJobs  ->
+					% presumable Caller is already deleted 
+					threadServer(Index, CanvasSize, NJobs, [])
+			end;
 		{getJob, Caller} ->
 			Caller ! { done }, % send him {done} in either case
-			case removeThreadJob([], Jobs, Caller) of
-				{ true, NJobs } ->
-					threadServer(Index, CanvasSize, NJobs);
-				_ ->
+			case removeThreadJob([], Jobs, Caller) of 
+				false ->
 					% TODO: what to do, if Caller is unknown?
-					threadServer(Index, CanvasSize, Jobs)
+					threadServer(Index, CanvasSize, Jobs, []);
+				NJobs ->
+					threadServer(Index, CanvasSize, NJobs, [])
 			end
 	end
 ;
-threadServer(Index, CanvasSize, Jobs) ->
+threadServer(Index, CanvasSize, Jobs, RestartParams) ->
 	receive
+		{'EXIT', Caller, Why} ->
+			NJobs = case isKnownThreadJob(Jobs, Caller) of
+				false -> Jobs;
+				true ->
+					io:format("Process ~w was killed by ~w.~nRestarting ...~n", [Caller, Why]),
+					Pid = spawnTraceWorker(RestartParams),
+					{OldIndex, New} = replaceThreadJob([], Jobs, Caller, Pid),
+					receive
+						{getJob, Pid} -> Pid ! { job, OldIndex, ?PIXELS_AT_ONCE }
+					end,
+					New
+			end,
+			threadServer(Index, CanvasSize, NJobs, RestartParams);
 		{getJob, Caller} ->
 			case setThreadJob([], Jobs, Caller, Index) of
-				{ true, NJobs } ->
-					Caller ! { job, Index, ?PIXELS_AT_ONCE },
-					threadServer(Index+?PIXELS_AT_ONCE, CanvasSize, NJobs);
-				_ ->
+				false ->
 					% TODO: what to do, if Caller is unknown?
-					threadServer(Index, CanvasSize, Jobs)
+					threadServer(Index, CanvasSize, Jobs, RestartParams);
+				NJobs ->
+					Caller ! { job, Index, ?PIXELS_AT_ONCE },
+					threadServer(Index+?PIXELS_AT_ONCE, CanvasSize, NJobs, RestartParams)
 			end
 	end
 .
 
 startThreadServer(CanvasSize, Main, Scene, Width, Height) ->
-	ThreadServer = self(),
+	process_flag(trap_exit, true),
+	RestartParams = [Main, self(), Scene, CanvasSize, Width, Height],
 	Jobs = lists:map(
-		fun(_) -> {
-			spawn_link(fun() ->
-				traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height)
-			end),
-			none
-		} end,
+		fun(_) -> { spawnTraceWorker(RestartParams), none } end,
 		lists:seq(0, ?THREAD_COUNT-1)
 	),
-	threadServer(0, CanvasSize, Jobs)
+	threadServer(0, CanvasSize, Jobs, RestartParams)
 .
 
 %collect collects @traceWorker/2's results
 %  Index: current index (begin with 0)
 %  CanvasSize: height * width
 %  Fd: file handle for output
-collect(Index, CanvasSize, _) when Index >= CanvasSize -> ok;
-collect(Index, CanvasSize, Fd) ->
+collect(Index, CanvasSize, _, _) when Index >= CanvasSize -> ok;
+collect(Index, CanvasSize, Fd, ThreadServer) ->
 	receive
+		{ 'EXIT', ThreadServer, normal } ->
+			collect(Index, CanvasSize, Fd, ThreadServer);
+		{ 'EXIT', ThreadServer, Why } ->
+			io:format("FATAL: The threadserver was killed~nWhy: ~w~n", [Why]),
+			throw({thread_server_was_killed, Why});
 		{ pixels, Index, Amount, Values } ->
 			file:write(Fd, prep(lists:append(lists:map(fun colorToList/1, Values)))),
-			collect(Index + Amount, CanvasSize, Fd)
+			collect(Index + Amount, CanvasSize, Fd, ThreadServer)
 	end.
 
 %produce a raytraced image
@@ -163,13 +199,14 @@ collect(Index, CanvasSize, Fd) ->
 %  Dimensions: of the output image in px
 %  returns: nothing
 trace(File, Scene, {Width, Height}) ->
+	process_flag(trap_exit, true),
 	Main = self(),
 	CanvasSize = Width*Height,
-	spawn(fun() -> startThreadServer(CanvasSize, Main, Scene, Width, Height) end),
+	ThreadServer = spawn_link(fun() -> startThreadServer(CanvasSize, Main, Scene, Width, Height) end),
 	case file:open(File, [write]) of
 		{ok, Fd} ->
 			file:write(Fd, ["P3\n", "# Erlang Raytracer Output"] ++ prep([Width, Height, 255])),
-			collect(0, CanvasSize , Fd),
+			collect(0, CanvasSize , Fd, ThreadServer),
 			file:close(Fd);
 		{error, R} ->
 			exit(R)
