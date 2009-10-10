@@ -1,5 +1,5 @@
 -module(raytracer).
--export([trace/3, test/1,intersect/3]).
+-export([trace/3, test/1, intersect/3]).
 
 -record(color, {r = 0, g = 0, b = 0}).
 -record(coords, {x = 0, y = 0, z = 0}).
@@ -67,11 +67,13 @@ reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
 %  ThreadServer: PID of process to ask for pixels to render
 traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) ->
 	receive
-		{done } -> ok
+		{ done } -> ok
 	after 0 ->
 		ThreadServer ! { getJob, self() },
 		receive
-			{ done } -> ok;
+			{ done } ->
+				io:format("traceWorker() PID ~w, Index ~w (100 %)~n", [self(), CanvasSize]),
+				ok;
 			{ job, Index, Amount } ->
 				io:format("traceWorker() PID ~w, Index ~w (~w %)~n", [self(), Index, trunc(Index/CanvasSize * 100)]),
 				Upper = if
@@ -92,22 +94,42 @@ traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) ->
 	end
 .
 
-spawnTraceWorker([Main, ThreadServer, Scene, CanvasSize, Width, Height]) ->
+spawnTraceWorker({Main, ThreadServer, Scene, CanvasSize, Width, Height}) ->
 	spawn_link(fun() -> traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) end)
 .
 
+%setThreadJob replaces the to C assigned job with I
+%  List: initially []
+%  TS: List of {PID,Job}
+%  C: PID in question
+%  I: new job
+%  returns: false if C is not in TS, otherwise new list
 setThreadJob(_, [], _, _) -> false;
 setThreadJob(List, [{T,_}|TS], T, I) -> [ {T,I} | List ++ TS ];
 setThreadJob(List, [T|TS], C, I) -> setThreadJob([T|List], TS, C, I) .
 
+%removeThreadJob removes a thread from a thread list
+%  List: initially []
+%  TS: List of {PID,Job}
+%  C: PID to delete
+%  returns: false if C was not in TS, otherwise new list
 removeThreadJob(_, [], _) -> false;
 removeThreadJob(List, [{T,_}|TS], T) -> List ++ TS;
 removeThreadJob(List, [T|TS], C) -> removeThreadJob([T|List], TS, C) .
 
+%replaceThreadJob replaces an old PID with a new PID
+%  List: initially []
+%  TS: List if {PID,Job}
+%  Old: old PID
+%  New: new PID
+%  returns: { assigned job, new list }
+%  throws: { thread_to_replace_is_unknown, [Old, New] } if Old is not in TS
 replaceThreadJob(_, [], Old, New) -> throw({thread_to_replace_is_unknown, [Old, New]});
 replaceThreadJob(List, [{Old,Index}|TS], Old, New) -> {Index, List ++ [{New,Index}|TS]};
 replaceThreadJob(List, [T|TS], Old, New) -> replaceThreadJob([T|List], TS, Old, New) .
 
+%isKnownThreadJob tests TS if it contains C
+%  returns: boolean
 isKnownThreadJob([], _) -> false;
 isKnownThreadJob([T|_], T) -> true;
 isKnownThreadJob([T|TS], C) -> isKnownThreadJob(TS, C) .
@@ -116,28 +138,21 @@ isKnownThreadJob([T|TS], C) -> isKnownThreadJob(TS, C) .
 %  Index: current index (begin with 0)
 %  CanvasSize: height * width
 %  Jobs: List of { PID, Index/none }
-threadServer(_, _, [], _) -> ok;
+%  RestartParams: Parameter for spawnTraceWorker
+threadServer(Index, CanvasSize, [], _) when Index >= CanvasSize -> ok;
+threadServer(_, _, [], _) -> throw(there_are_no_threads_to_do_jobs);
 threadServer(Index, CanvasSize, Jobs, _) when Index >= CanvasSize ->
-	receive
-		{'EXIT', Caller, _} ->
-			case removeThreadJob([], Jobs, Caller) of
-				false ->
-					% I don't know the killed one, so I've nothing to do
-					threadServer(Index, CanvasSize, Jobs, []);
-				NJobs  ->
-					% presumable Caller is already deleted 
-					threadServer(Index, CanvasSize, NJobs, [])
-			end;
-		{getJob, Caller} ->
-			Caller ! { done }, % send him {done} in either case
-			case removeThreadJob([], Jobs, Caller) of 
-				false ->
-					% TODO: what to do, if Caller is unknown?
-					threadServer(Index, CanvasSize, Jobs, []);
-				NJobs ->
-					threadServer(Index, CanvasSize, NJobs, [])
-			end
-	end
+	Caller = receive
+		{'EXIT', Pid, _} -> Pid;
+		{getJob, Pid} ->
+			Pid!{done}, % send him {done} in either case
+			Pid
+	end,
+	NJobs = case removeThreadJob([], Jobs, Caller) of 
+		false -> Jobs;
+		New -> New
+	end,
+	threadServer(Index, CanvasSize, NJobs, {})
 ;
 threadServer(Index, CanvasSize, Jobs, RestartParams) ->
 	receive
@@ -151,12 +166,18 @@ threadServer(Index, CanvasSize, Jobs, RestartParams) ->
 					case {OldIndex, New} = replaceThreadJob([], Jobs, Caller, Pid) of
 						{none, New} ->
 							receive
-								{getJob, Pid} -> Pid ! { job, Index, ?PIXELS_AT_ONCE }
+								{'EXIT', Pid, Why} ->
+									throw({thread_keeps_on_EXITing, Caller, Why});
+								{getJob, Pid} ->
+									Pid ! { job, Index, ?PIXELS_AT_ONCE }
 							end,
-							{ New, Index+?PIXELS_AT_ONCE };
+							{ New, Index + ?PIXELS_AT_ONCE };
 						{OldIndex, New} -> 
 							receive
-								{getJob, Pid} -> Pid ! { job, OldIndex, ?PIXELS_AT_ONCE }
+								{'EXIT', Pid, Why} ->
+									throw({thread_keeps_on_EXITing, Caller, Why});
+								{getJob, Pid} ->
+									Pid ! { job, OldIndex, ?PIXELS_AT_ONCE }
 							end,
 							{ New, Index }
 					end
@@ -176,7 +197,7 @@ threadServer(Index, CanvasSize, Jobs, RestartParams) ->
 
 startThreadServer(CanvasSize, Main, Scene, Width, Height) ->
 	process_flag(trap_exit, true),
-	RestartParams = [Main, self(), Scene, CanvasSize, Width, Height],
+	RestartParams = { Main, self(), Scene, CanvasSize, Width, Height },
 	Jobs = lists:map(
 		fun(_) -> { spawnTraceWorker(RestartParams), none } end,
 		lists:seq(0, ?THREAD_COUNT-1)
@@ -184,7 +205,7 @@ startThreadServer(CanvasSize, Main, Scene, Width, Height) ->
 	threadServer(0, CanvasSize, Jobs, RestartParams)
 .
 
-%collect collects @traceWorker/2's results
+%collect collects traceWorker's results
 %  Index: current index (begin with 0)
 %  CanvasSize: height * width
 %  Fd: file handle for output
@@ -197,7 +218,8 @@ collect(Index, CanvasSize, Fd, ThreadServer) ->
 			io:format("FATAL: The threadserver was killed~nWhy: ~w~n", [Why]),
 			throw({thread_server_was_killed, Why});
 		{ pixels, Index, Amount, Values } ->
-			file:write(Fd, prep(lists:append(lists:map(fun colorToList/1, Values)))),
+			Data = lists:append(lists:map(fun(#color{r=R, g=G, b=B}) -> [trunc(R),trunc(G),trunc(B)] end, Values)),
+			io:put_chars(Fd, Data),
 			collect(Index + Amount, CanvasSize, Fd, ThreadServer)
 	end.
 
@@ -207,23 +229,22 @@ collect(Index, CanvasSize, Fd, ThreadServer) ->
 %  Dimensions: of the output image in px
 %  returns: nothing
 trace(File, Scene, {Width, Height}) ->
-	process_flag(trap_exit, true),
-	Main = self(),
-	CanvasSize = Width*Height,
-	ThreadServer = spawn_link(fun() -> startThreadServer(CanvasSize, Main, Scene, Width, Height) end),
-	case file:open(File, [write]) of
+	case file:open(File, [write, delayed_write]) of
 		{ok, Fd} ->
-			file:write(Fd, ["P3\n", "# Erlang Raytracer Output"] ++ prep([Width, Height, 255])),
-			collect(0, CanvasSize , Fd, ThreadServer),
+			process_flag(trap_exit, true),
+			Main = self(),
+			CanvasSize = Width*Height,
+			ThreadServer = spawn_link(fun() -> startThreadServer(CanvasSize, Main, Scene, Width, Height) end),
+			io:put_chars(Fd,
+				"P6\n# Erlang Raytracer Output\n" ++ integer_to_list(Width) ++ " " ++
+				integer_to_list(Height) ++"\n255\n"),
+			collect(0, CanvasSize, Fd, ThreadServer),
 			file:close(Fd);
 		{error, R} ->
-			exit(R)
+			throw({error_opening_file, File, R})
 	end,
 	ok
 .
-
-prep(List) ->
-	lists:map(fun(R) -> [$\n|integer_to_list(trunc(R))] end, List).
 
 vectorSqr(#coords{x=X, y=Y, z=Z}) -> (X*X + Y*Y + Z*Z).
 vectorMul(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> A*X + B*Y + C*Z .
@@ -232,7 +253,6 @@ vectorAbs(V) -> math:sqrt( vectorSqr(V) ) .
 vectorAdd(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> #coords{x=A+X, y=B+Y, z=C+Z} .
 vectorSub(#coords{x=X, y=Y, z=Z}, #coords{x=A, y=B, z=C}) -> #coords{x=X-A, y=Y-B, z=Z-C} .
 
-colorToList(#color{r=R, g=G, b=B}) -> [R,G,B].
 colorMul(#color{r=R1,g=G1,b=B1}, #color{r=R2,g=G2,b=B2}) ->
 	#color{r=R1*R2, g=G1*G2, b=B1*B2}.
 colorScale(#color{r=R,g=G,b=B}, S) ->
@@ -248,12 +268,12 @@ intersect(Object, StartPos, Target) ->
 	ST = vectorSub(StartPos, Target),
 	R2 = Object#sphere.radius * Object#sphere.radius,
 
-	ST2 = vectorSqr(ST),
+	STm2 = 1.0/vectorSqr(ST),
 	CS2 = vectorSqr(CS),
 	CStST = vectorMul(CS, ST),
 
-	Left = - (CStST / ST2),
-	Right = (Left*Left) + ((R2-CS2)/ST2),
+	Left = - (CStST * STm2),
+	Right = (Left*Left) + ((R2-CS2)*STm2),
 
 	if
 		Right < 0 -> {undefined, undefined, undefined, undefined};
@@ -262,19 +282,19 @@ intersect(Object, StartPos, Target) ->
 			{Object, vectorAdd(scalarMul(ST, -L), StartPos), L, scalarMul(ST, -Left)}
 	end.
 
+testScene() -> [
+	#sphere{radius=3000, coords = #coords{x=0,y=0,z=-8000}, light = false, color = #color{r=0.72,g=0.6,b=0.2}},
+	#sphere{radius=9997200, coords = #coords{x=0,y=10000000,z=-8000}, light = false, color = #color{r=0.5,g=0.5,b=0.5}},
+	#sphere{radius=600, coords = #coords{x=-2000,y=-2200,z=-6000}, light = true, color = #color{r=255,g=255,b=255}},
+	#sphere{radius=600, coords = #coords{x=0,y=-2200,z=-5000}, light = false, color = #color{r=1,g=1,b=1}},
+	#sphere{radius=600, coords = #coords{x=2000,y=-2200,z=-4000}, light = true, color = #color{r=255,g=0,b=0}},
+	#sphere{radius=600, coords = #coords{x=-2000,y=0,z=-5000}, light = true, color = #color{r=100,g=0,b=255}},
+	#sphere{radius=600, coords = #coords{x=2000,y=-0,z=-5000}, light = true, color = #color{r=255,g=255,b=0}},
+	#sphere{radius=600, coords = #coords{x=-2000,y=2200,z=-6000}, light = true, color = #color{r=128,g=255,b=0}},
+	#sphere{radius=600, coords = #coords{x=0,y=2200,z=-5000}, light = false, color = #color{r=1,g=1,b=1}},
+	#sphere{radius=600, coords = #coords{x=2000,y=2200,z=-4000}, light = true, color = #color{r=0,g=0,b=255}}
+
+].
+
 test(X) ->
-	trace("X.pnm",
-		[
-			#sphere{radius=3000, coords = #coords{x=0,y=0,z=-8000}, light = false, color = #color{r=0.72,g=0.6,b=0.2}},
-			#sphere{radius=9997200, coords = #coords{x=0,y=10000000,z=-8000}, light = false, color = #color{r=0.5,g=0.5,b=0.5}},
-			#sphere{radius=600, coords = #coords{x=-2000,y=-2200,z=-6000}, light = true, color = #color{r=255,g=255,b=255}},
-			#sphere{radius=600, coords = #coords{x=0,y=-2200,z=-5000}, light = false, color = #color{r=1,g=1,b=1}},
-			#sphere{radius=600, coords = #coords{x=2000,y=-2200,z=-4000}, light = true, color = #color{r=255,g=0,b=0}},
-			#sphere{radius=600, coords = #coords{x=-2000,y=0,z=-5000}, light = true, color = #color{r=100,g=0,b=255}},
-			#sphere{radius=600, coords = #coords{x=2000,y=-0,z=-5000}, light = true, color = #color{r=255,g=255,b=0}},
-			#sphere{radius=600, coords = #coords{x=-2000,y=2200,z=-6000}, light = true, color = #color{r=128,g=255,b=0}},
-			#sphere{radius=600, coords = #coords{x=0,y=2200,z=-5000}, light = false, color = #color{r=1,g=1,b=1}},
-			#sphere{radius=600, coords = #coords{x=2000,y=2200,z=-4000}, light = true, color = #color{r=0,g=0,b=255}}
-		],
-		{X,X}
-	).
+	trace("X.pnm", testScene(), {X,X}).
