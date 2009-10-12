@@ -72,10 +72,10 @@ traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) ->
 		ThreadServer ! { getJob, self() },
 		receive
 			{ done } ->
-				io:format("traceWorker() PID ~w, Index ~w (100 %)~n", [self(), CanvasSize]),
+				io:format("<  Worker PID ~w, Index ~w (done)~n", [self(), CanvasSize]),
 				ok;
 			{ job, Index, Amount } ->
-				io:format("traceWorker() PID ~w, Index ~w (~w %)~n", [self(), Index, trunc(Index/CanvasSize * 100)]),
+				io:format("<  Worker PID ~w, Index ~w (~w %)~n", [self(), Index, trunc(Index/CanvasSize * 100)]),
 				Upper = if
 					Index+Amount >= CanvasSize -> CanvasSize-1;
 					true -> Index+Amount-1
@@ -139,12 +139,17 @@ isKnownThreadJob([T|TS], C) -> isKnownThreadJob(TS, C) .
 %  CanvasSize: height * width
 %  Jobs: List of { PID, Index/none }
 %  RestartParams: Parameter for spawnTraceWorker
-threadServer(Index, CanvasSize, [], _) when Index >= CanvasSize -> ok;
+threadServer(Index, CanvasSize, [], _) when Index >= CanvasSize ->
+	io:format(" > Server all done!~n"),
+	ok;
 threadServer(_, _, [], _) -> throw(there_are_no_threads_to_do_jobs);
 threadServer(Index, CanvasSize, Jobs, _) when Index >= CanvasSize ->
 	Caller = receive
-		{'EXIT', Pid, _} -> Pid;
+		{'EXIT', Pid, Why} ->
+			io:format(" > Server PID ~w sent exit <~w>~n", [Pid, Why]),
+			Pid;
 		{getJob, Pid} ->
+			io:format(" > Server PID ~w will receive done~n", [Pid]),
 			Pid!{done}, % send him {done} in either case
 			Pid
 	end,
@@ -157,11 +162,13 @@ threadServer(Index, CanvasSize, Jobs, _) when Index >= CanvasSize ->
 threadServer(Index, CanvasSize, Jobs, RestartParams) ->
 	receive
 		{'EXIT', Caller, Why} ->
+			io:format(" > Server PID ~w killed <~w>", [Caller, Why]),
 			{NJobs, NIndex} = case isKnownThreadJob(Jobs, Caller) of
 				false ->
+					io:format(" > Process unknown (?)~n"),
 					{Jobs, Index};
 				true ->
-					io:format("Process ~w was killed by ~w.~nRestarting ...~n", [Caller, Why]),
+					io:format(" > Restarting ...~n"),
 					Pid = spawnTraceWorker(RestartParams),
 					case {OldIndex, New} = replaceThreadJob([], Jobs, Caller, Pid) of
 						{none, New} ->
