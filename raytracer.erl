@@ -67,7 +67,9 @@ reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
 %  ThreadServer: PID of process to ask for pixels to render
 traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) ->
 	receive
-		{ done } -> ok
+		{ done } ->
+			io:format("<  Worker PID ~w, Index ~w (done)~n", [self(), CanvasSize]),
+			ok
 	after 0 ->
 		ThreadServer ! { getJob, self() },
 		receive
