@@ -165,31 +165,23 @@ threadServer(Index, CanvasSize, Jobs, RestartParams) ->
 	receive
 		{'EXIT', Caller, Why} ->
 			io:format(" > Server PID ~w killed <~w>", [Caller, Why]),
-			{NJobs, NIndex} = case isKnownThreadJob(Jobs, Caller) of
+			{NJobs, IndexToSend, NIndex} = case isKnownThreadJob(Jobs, Caller) of
 				false ->
 					io:format(" > Process unknown (?)~n"),
-					{Jobs, Index};
+					{Jobs Index, Index};
 				true ->
 					io:format(" > Restarting ...~n"),
 					Pid = spawnTraceWorker(RestartParams),
-					case {OldIndex, New} = replaceThreadJob([], Jobs, Caller, Pid) of
-						{none, New} ->
-							receive
-								{'EXIT', Pid, Why} ->
-									throw({thread_keeps_on_EXITing, Caller, Why});
-								{getJob, Pid} ->
-									Pid ! { job, Index, ?PIXELS_AT_ONCE }
-							end,
-							{ New, Index + ?PIXELS_AT_ONCE };
-						{OldIndex, New} -> 
-							receive
-								{'EXIT', Pid, Why} ->
-									throw({thread_keeps_on_EXITing, Caller, Why});
-								{getJob, Pid} ->
-									Pid ! { job, OldIndex, ?PIXELS_AT_ONCE }
-							end,
-							{ New, Index }
+					case replaceThreadJob([], Jobs, Caller, Pid) of
+						{none, New} -> { New, Index, Index + ?PIXELS_AT_ONCE };
+						{OldIndex, New} -> { New, OldIndex, Index }
 					end
+			end,
+			receive
+				{'EXIT', Pid, Why} ->
+					throw({thread_keeps_on_EXITing, Caller, Why});
+				{getJob, Pid} ->
+					Pid ! { job, IndexToSend, ?PIXELS_AT_ONCE }
 			end,
 			threadServer(NIndex, CanvasSize, NJobs, RestartParams);
 		{getJob, Caller} ->
