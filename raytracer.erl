@@ -14,7 +14,7 @@
 % along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 -module(raytracer).
--export([trace/3, test/1, intersect/3]).
+-export([test/1]).
 
 -record(color, {r = 0, g = 0, b = 0}).
 -record(coords, {x = 0, y = 0, z = 0}).
