@@ -24,7 +24,12 @@
 -define(THREAD_COUNT, 5).
 
 %debug prints (formatted) Text to stderr
-debug(Text) -> port_command( open_port({fd,0,2}, [out]) , Text) .
+debug(Text) ->
+	Stderr = open_port({fd,0,2}, [out]),
+	Result = port_command(Stderr, Text),
+	port_close(Stderr),
+	Result
+.
 debug(Format, Parameters) -> debug( io_lib:format(Format, Parameters) ) .
 
 %cast a ray
