@@ -23,6 +23,10 @@
 -define(PIXELS_AT_ONCE, trunc(math:pow(2,12))).
 -define(THREAD_COUNT, 5).
 
+%debug prints (formatted) Text to stderr
+debug(Text) -> port_command( open_port({fd,0,2}, [out]) , Text) .
+debug(Format, Parameters) -> debug( io_lib:format(Format, Parameters) ) .
+
 %cast a ray
 %  World: a list of geometry and lightsources the ray is cast into
 %  StartPos: current "position" of ray
@@ -83,16 +87,16 @@ reflect(#sphere{radius = R, coords = C, light = false}, StartPos, Impact) ->
 traceWorker(Main, ThreadServer, Scene, CanvasSize, Width, Height) ->
 	receive
 		{ done } ->
-			io:format("<  Worker PID ~w, Index ~w (done)~n", [self(), CanvasSize]),
+			debug("<  Worker PID ~w, Index ~w (done)~n", [self(), CanvasSize]),
 			ok
 	after 0 ->
 		ThreadServer ! { getJob, self() },
 		receive
 			{ done } ->
-				io:format("<  Worker PID ~w, Index ~w (done)~n", [self(), CanvasSize]),
+				debug("<  Worker PID ~w, Index ~w (done)~n", [self(), CanvasSize]),
 				ok;
 			{ job, Index, Amount } ->
-				io:format("<  Worker PID ~w, Index ~w (~w %)~n", [self(), Index, trunc(Index/CanvasSize * 100)]),
+				debug("<  Worker PID ~w, Index ~w (~w %)~n", [self(), Index, trunc(Index/CanvasSize * 100)]),
 				Upper = if
 					Index+Amount >= CanvasSize -> CanvasSize-1;
 					true -> Index+Amount-1
@@ -157,16 +161,16 @@ isKnownThreadJob([_|TS], C) -> isKnownThreadJob(TS, C) .
 %  Jobs: List of { PID, Index/none }
 %  RestartParams: Parameter for spawnTraceWorker
 threadServer(Index, CanvasSize, [], _) when Index >= CanvasSize ->
-	io:format(" > Server all done!~n"),
+	debug(" > Server all done!~n", []),
 	ok;
 threadServer(_, _, [], _) -> throw(there_are_no_threads_to_do_jobs);
 threadServer(Index, CanvasSize, Jobs, _) when Index >= CanvasSize ->
 	Caller = receive
 		{'EXIT', Pid, Why} ->
-			io:format(" > Server PID ~w sent exit <~w>~n", [Pid, Why]),
+			debug(" > Server PID ~w sent exit <~w>~n", [Pid, Why]),
 			Pid;
 		{getJob, Pid} ->
-			io:format(" > Server PID ~w will receive done~n", [Pid]),
+			debug(" > Server PID ~w will receive done~n", [Pid]),
 			Pid!{done}, % send him {done} in either case
 			Pid
 	end,
@@ -179,13 +183,13 @@ threadServer(Index, CanvasSize, Jobs, _) when Index >= CanvasSize ->
 threadServer(Index, CanvasSize, Jobs, RestartParams) ->
 	receive
 		{'EXIT', Caller, Why} ->
-			io:format(" > Server PID ~w killed <~w>", [Caller, Why]),
+			debug(" > Server PID ~w killed <~w>", [Caller, Why]),
 			{NJ, NI} = case isKnownThreadJob(Jobs, Caller) of
 				false ->
-					io:format(" > Process unknown (?)~n"),
+					debug(" > Process unknown (?)~n", []),
 					{Jobs, Index};
 				true ->
-					io:format(" > Restarting ...~n"),
+					debug(" > Restarting ...~n", []),
 					Pid = spawnTraceWorker(RestartParams),
 					{ NJobs, IndexToSend, NIndex }  = case replaceThreadJob([], Jobs, Caller, Pid) of
 						{none, New}     -> { New, Index, Index + ?PIXELS_AT_ONCE };
@@ -225,17 +229,17 @@ startThreadServer(CanvasSize, Main, Scene, Width, Height) ->
 %  CanvasSize: height * width
 %  Fd: file handle for output
 collect(Index, CanvasSize, _, _) when Index >= CanvasSize -> ok;
-collect(Index, CanvasSize, Fd, ThreadServer) ->
+collect(Index, CanvasSize, Pnmtopng, ThreadServer) ->
 	receive
 		{ 'EXIT', ThreadServer, normal } ->
-			collect(Index, CanvasSize, Fd, ThreadServer);
+			collect(Index, CanvasSize, Pnmtopng, ThreadServer);
 		{ 'EXIT', ThreadServer, Why } ->
-			io:format("FATAL: The threadserver was killed~nWhy: ~w~n", [Why]),
+			debug("FATAL: The threadserver was killed~nWhy: ~w~n", [Why]),
 			throw({thread_server_was_killed, Why});
 		{ pixels, Index, Amount, Values } ->
 			Data = lists:append(lists:map(fun(#color{r=R, g=G, b=B}) -> [trunc(R),trunc(G),trunc(B)] end, Values)),
-			io:put_chars(Fd, Data),
-			collect(Index + Amount, CanvasSize, Fd, ThreadServer)
+			port_command(Pnmtopng, Data),
+			collect(Index + Amount, CanvasSize, Pnmtopng, ThreadServer)
 	end.
 
 %produce a raytraced image
@@ -244,20 +248,14 @@ collect(Index, CanvasSize, Fd, ThreadServer) ->
 %  Dimensions: of the output image in px
 %  returns: nothing
 trace(File, Scene, {Width, Height}) ->
-	case file:open(File, [write, delayed_write]) of
-		{ok, Fd} ->
-			process_flag(trap_exit, true),
-			Main = self(),
-			CanvasSize = Width*Height,
-			ThreadServer = spawn_link(fun() -> startThreadServer(CanvasSize, Main, Scene, Width, Height) end),
-			io:put_chars(Fd,
-				"P6\n# Erlang Raytracer Output\n" ++ integer_to_list(Width) ++ " " ++
-				integer_to_list(Height) ++"\n255\n"),
-			collect(0, CanvasSize, Fd, ThreadServer),
-			file:close(Fd);
-		{error, R} ->
-			throw({error_opening_file, File, R})
-	end,
+	Pnmtopng = open_port({spawn, "pnmtopng"}, [stream, binary, out]),
+	process_flag(trap_exit, true),
+	Main = self(),
+	CanvasSize = Width*Height,
+	ThreadServer = spawn_link(fun() -> startThreadServer(CanvasSize, Main, Scene, Width, Height) end),
+	port_command(Pnmtopng, "P6\n" ++ integer_to_list(Width) ++ " " ++ integer_to_list(Height) ++"\n255\n"),
+	collect(0, CanvasSize, Pnmtopng, ThreadServer),
+	port_close(Pnmtopng),
 	ok
 .
 
