@@ -133,10 +133,10 @@ replaceThreadJob(List, [T|TS], Old, New) -> replaceThreadJob([T|List], TS, Old, 
 %isKnownThreadJob tests TS if it contains C
 %  returns: boolean
 isKnownThreadJob([], _) -> false;
-isKnownThreadJob([T|_], T) -> true;
-isKnownThreadJob([T|TS], C) -> isKnownThreadJob(TS, C) .
+isKnownThreadJob([{T,_}|_], T) -> true;
+isKnownThreadJob([_|TS], C) -> isKnownThreadJob(TS, C) .
 
-%threadServer anwers @traceWorker/2's request for pixels to process
+%threadServer anwers traceWorker's request for pixels to process
 %  Index: current index (begin with 0)
 %  CanvasSize: height * width
 %  Jobs: List of { PID, Index/none }
