@@ -25,10 +25,11 @@
 
 %debug prints (formatted) Text to stderr
 debug(Text) ->
-	Stderr = open_port({fd,0,2}, [out]),
-	Result = port_command(Stderr, Text),
-	port_close(Stderr),
-	Result
+	%Stderr = open_port({fd,0,2}, [out]),
+	%Result = port_command(Stderr, Text),
+	%port_close(Stderr),
+	%Result
+	ok
 .
 debug(Format, Parameters) -> debug( io_lib:format(Format, Parameters) ) .
 
@@ -253,7 +254,8 @@ collect(Index, CanvasSize, Pnmtopng, ThreadServer) ->
 %  Dimensions: of the output image in px
 %  returns: nothing
 trace(File, Scene, {Width, Height}) ->
-	Pnmtopng = open_port({spawn, "pnmtopng"}, [stream, binary, out]),
+	Pnmtopng = open_port({fd,0,1}, [binary, out]),
+	%Pnmtopng = open_port({spawn, "pnmtopng"}, [stream, binary, out]),
 	process_flag(trap_exit, true),
 	Main = self(),
 	CanvasSize = Width*Height,
