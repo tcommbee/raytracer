@@ -22,11 +22,15 @@
 
 -define(PIXELS_AT_ONCE, trunc(math:pow(2,12))).
 -define(THREAD_COUNT, 5).
--define(STDERR, open_port({fd,0,2}, [out])).
--define(STDOUT, open_port({fd,0,1}, [out])).
 
 %debug prints (formatted) Text to stderr
-debug(Text) -> port_command(?STDERR, Text) .
+debug(Text) ->
+	Stderr = case get('PORT_STDERR') of
+		undefined -> R = open_port({fd,0,2}, [out]), put('PORT_STDERR', R), R;
+		R -> R
+	end,
+	port_command(Stderr, Text)
+.
 debug(Format, Parameters) -> debug( io_lib:format(Format, Parameters) ) .
 
 %cast a ray
@@ -309,4 +313,9 @@ testScene() -> [
 
 ].
 
-test(X) -> trace(?STDOUT, testScene(), {X,X}).
+test(X) ->
+	Stdout = open_port({fd,0,1}, [out]),
+	Result = trace(Stdout, testScene(), {X,X}),
+	port_close(Stdout),
+	Result
+.
