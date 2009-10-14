@@ -14,7 +14,7 @@
 % along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 -module(raytracer).
--export([test/1]).
+-export([trace/3, test/1]).
 
 -record(color, {r = 0, g = 0, b = 0}).
 -record(coords, {x = 0, y = 0, z = 0}).
@@ -22,15 +22,11 @@
 
 -define(PIXELS_AT_ONCE, trunc(math:pow(2,12))).
 -define(THREAD_COUNT, 5).
+-define(STDERR, open_port({fd,0,2}, [out])).
+-define(STDOUT, open_port({fd,0,1}, [out])).
 
 %debug prints (formatted) Text to stderr
-debug(Text) ->
-	%Stderr = open_port({fd,0,2}, [out]),
-	%Result = port_command(Stderr, Text),
-	%port_close(Stderr),
-	%Result
-	ok
-.
+debug(Text) -> port_command(?STDERR, Text) .
 debug(Format, Parameters) -> debug( io_lib:format(Format, Parameters) ) .
 
 %cast a ray
@@ -233,37 +229,34 @@ startThreadServer(CanvasSize, Main, Scene, Width, Height) ->
 %collect collects traceWorker's results
 %  Index: current index (begin with 0)
 %  CanvasSize: height * width
-%  Fd: file handle for output
+%  Port: to write to
+%  returns: nothing
 collect(Index, CanvasSize, _, _) when Index >= CanvasSize -> ok;
-collect(Index, CanvasSize, Pnmtopng, ThreadServer) ->
+collect(Index, CanvasSize, Port, ThreadServer) ->
 	receive
 		{ 'EXIT', ThreadServer, normal } ->
-			collect(Index, CanvasSize, Pnmtopng, ThreadServer);
+			collect(Index, CanvasSize, Port, ThreadServer);
 		{ 'EXIT', ThreadServer, Why } ->
-			debug("FATAL: The threadserver was killed~nWhy: ~w~n", [Why]),
+			debug(" > FATAL: The threadserver was killed~nWhy: ~w~n", [Why]),
 			throw({thread_server_was_killed, Why});
 		{ pixels, Index, Amount, Values } ->
 			Data = lists:append(lists:map(fun(#color{r=R, g=G, b=B}) -> [trunc(R),trunc(G),trunc(B)] end, Values)),
-			port_command(Pnmtopng, Data),
-			collect(Index + Amount, CanvasSize, Pnmtopng, ThreadServer)
+			port_command(Port, Data),
+			collect(Index + Amount, CanvasSize, Port, ThreadServer)
 	end.
 
 %produce a raytraced image
-%  File: filename for output
+%  Port: port() to write to
 %  Scene: a list of geometry and lightsources to be rendered
 %  Dimensions: of the output image in px
 %  returns: nothing
-trace(File, Scene, {Width, Height}) ->
-	Pnmtopng = open_port({fd,0,1}, [binary, out]),
-	%Pnmtopng = open_port({spawn, "pnmtopng"}, [stream, binary, out]),
+trace(Port, Scene, {Width, Height}) ->
 	process_flag(trap_exit, true),
 	Main = self(),
 	CanvasSize = Width*Height,
 	ThreadServer = spawn_link(fun() -> startThreadServer(CanvasSize, Main, Scene, Width, Height) end),
-	port_command(Pnmtopng, "P6\n" ++ integer_to_list(Width) ++ " " ++ integer_to_list(Height) ++"\n255\n"),
-	collect(0, CanvasSize, Pnmtopng, ThreadServer),
-	port_close(Pnmtopng),
-	ok
+	port_command(Port, "P6\n" ++ integer_to_list(Width) ++ " " ++ integer_to_list(Height) ++"\n255\n"),
+	collect(0, CanvasSize, Port, ThreadServer)
 .
 
 vectorSqr(#coords{x=X, y=Y, z=Z}) -> (X*X + Y*Y + Z*Z).
@@ -316,5 +309,4 @@ testScene() -> [
 
 ].
 
-test(X) ->
-	trace("X.pnm", testScene(), {X,X}).
+test(X) -> trace(?STDOUT, testScene(), {X,X}).
