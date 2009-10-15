@@ -197,13 +197,13 @@ threadServer(Index, CanvasSize, Jobs, RestartParams) ->
 				true ->
 					debug(" > Restarting ...~n", []),
 					Pid = spawnTraceWorker(RestartParams),
-					{ NJobs, IndexToSend, NIndex }  = case replaceThreadJob([], Jobs, Caller, Pid) of
-						{none, New}     -> { New, Index, Index + ?PIXELS_AT_ONCE };
+					{ NJobs, IndexToSend, NIndex } = case replaceThreadJob([], Jobs, Caller, Pid) of
+						{none, New}  -> { New, Index, Index + ?PIXELS_AT_ONCE };
 						{OldIndex, New} -> { New, OldIndex, Index }
 					end,
 					receive
-						{'EXIT', Pid, Why} -> throw({thread_keeps_on_EXITing, Caller, Why});
-						{getJob, Pid}      -> Pid ! { job, IndexToSend, ?PIXELS_AT_ONCE }
+						{'EXIT', Pid, NewWhy} -> throw({thread_keeps_on_EXITing, Caller, NewWhy});
+						{getJob, Pid} -> Pid ! { job, IndexToSend, ?PIXELS_AT_ONCE }
 					end,
 					{ NJobs, NIndex }
 			end,
