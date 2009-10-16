@@ -1,0 +1,27 @@
+Der Raytracer rendert eine im Code festgelegte Szene aus Kugeln in eine
+Bitmap (PNM) und gibt diese über stdout aus.
+
+Abhängigkeiten:
+	make
+	Erlang
+
+Kompilieren:
+	make
+
+Ausführung:
+	Um eine 100x100-Pixel-Grafik in output.pnm zu schreiben:
+	erl -smp -noshell -eval "raytracer:test(100)." -s init stop > output.pnm
+	
+	Für größere Ausgabegrößen kann die Ausgabe on-the-fly komprimiert werden,
+	da die PNM-Dateien sonst sehr groß werden (ca. 5 Byte/Pixel). Dazu kann z.B.
+	das Beispielprogramm wpng von http://www.libpng.org/pub/png/book/sources.html
+	benutzt werden:
+	erl -smp -noshell -eval "raytracer:test(10000)." -s init stop | wpng > output.png
+
+Bugs:
+	Das Programm läuft nicht verteilt, sondern nur innerhalb einer einzigen
+	Erlangshell (also maximal auf allen Kernen eines Systems).
+	
+	Das Beleuchtungskonzept ist sehr primitiv.
+	
+	Blickwinkel und Seitenverhältnis ist festgelegt.
